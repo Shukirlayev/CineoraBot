@@ -9,6 +9,7 @@ const composer = new Composer();
 // Kontent qo'shish
 composer.hears("➕ Kontent qo'shish", async (ctx) => {
   if (!ctx.adminRole) return;
+  ctx.session = ctx.session || {};
   ctx.session.adminState = { step: 'select_type' };
 
   await ctx.reply('📦 Kontent turini tanlang:', {
@@ -28,16 +29,21 @@ composer.hears("➕ Kontent qo'shish", async (ctx) => {
 composer.action(/^add_type_(movie|serial|anime)$/, async (ctx) => {
   if (!ctx.adminRole) return ctx.answerCbQuery('❌ Ruxsat yo\'q');
   const type = ctx.match[1];
+  ctx.session = ctx.session || {};
   ctx.session.adminState = { step: 'enter_title', contentData: { type } };
   const names = { movie: '🎬 Kino', serial: '📺 Serial', anime: '🎌 Anime' };
   await ctx.answerCbQuery();
-  await ctx.editMessageText(`✅ Tur: ${names[type]}\n\n📝 Kontent nomini yozing:`);
+  try {
+    await ctx.editMessageText(`✅ Tur: ${names[type]}\n\n📝 Kontent nomini yozing:`);
+  } catch (e) {}
 });
 
 composer.action('add_cancel', async (ctx) => {
-  ctx.session.adminState = null;
+  if (ctx.session) ctx.session.adminState = null;
   await ctx.answerCbQuery();
-  await ctx.editMessageText('❌ Bekor qilindi.');
+  try {
+    await ctx.editMessageText('❌ Bekor qilindi.');
+  } catch (e) {}
 });
 
 // Tilni saqlash
@@ -182,7 +188,6 @@ composer.on(['video', 'document'], async (ctx, next) => {
       { parse_mode: 'HTML' }
     );
   } else {
-    // Serial yoki Anime
     let content = await Content.findOne({ title: data.title, type: data.type });
 
     if (!content) {
@@ -276,7 +281,7 @@ composer.action('ep_new_season', async (ctx) => {
 
 composer.action('ep_done', async (ctx) => {
   if (!ctx.adminRole) return;
-  ctx.session.adminState = null;
+  if (ctx.session) ctx.session.adminState = null;
   await ctx.answerCbQuery();
   await ctx.reply('✅ Kontent yuklash yakunlandi!');
 });
@@ -331,9 +336,12 @@ composer.action(/^admin_list_(movie|serial|anime)_(\d+)$/, async (ctx) => {
       reply_markup: { inline_keyboard: buttons }
     });
   } catch (e) {
-    await ctx.reply(`📋 ${type} ro'yxati (${total} ta):`, {
-      reply_markup: { inline_keyboard: buttons }
-    });
+    // Agar xabar o'zgarmagan bo'lsa chat qulashini oldini oladi
+    if (!e.message.includes('message is not modified')) {
+      await ctx.reply(`📋 ${type} ro'yxati (${total} ta):`, {
+        reply_markup: { inline_keyboard: buttons }
+      });
+    }
   }
 });
 
@@ -346,28 +354,30 @@ composer.action(/^admin_content_(.+)$/, async (ctx) => {
   const link = getDeepLink(uniqueId);
 
   await ctx.answerCbQuery();
-  await ctx.editMessageText(
-    `📦 <b>${content.title}</b>\n\n` +
-    `🆔 ID: <code>${uniqueId}</code>\n` +
-    `🔗 Link: ${link}\n` +
-    `👁 Ko'rishlar: ${content.viewCount}\n` +
-    `📊 Status: ${content.isActive ? '✅ Aktiv' : '❌ Nofaol'}`,
-    {
-      parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: [
-          [
-            {
-              text: content.isActive ? "🔴 O'chirish" : '🟢 Yoqish',
-              callback_data: `toggle_${uniqueId}`
-            },
-            { text: '🗑 O\'chirish', callback_data: `del_${uniqueId}` }
-          ],
-          [{ text: '🔙 Orqaga', callback_data: `admin_list_${content.type}_0` }]
-        ]
+  try {
+    await ctx.editMessageText(
+      `📦 <b>${content.title}</b>\n\n` +
+      `🆔 ID: <code>${uniqueId}</code>\n` +
+      `🔗 Link: ${link}\n` +
+      `👁 Ko'rishlar: ${content.viewCount}\n` +
+      `📊 Status: ${content.isActive ? '✅ Aktiv' : '❌ Nofaol'}`,
+      {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: content.isActive ? "🔴 O'chirish" : '🟢 Yoqish',
+                callback_data: `toggle_${uniqueId}`
+              },
+              { text: '🗑 O\'chirish', callback_data: `del_${uniqueId}` }
+            ],
+            [{ text: '🔙 Orqaga', callback_data: `admin_list_${content.type}_0` }]
+          ]
+        }
       }
-    }
-  );
+    );
+  } catch (e) {}
 });
 
 composer.action(/^toggle_(.+)$/, async (ctx) => {
@@ -381,44 +391,48 @@ composer.action(/^toggle_(.+)$/, async (ctx) => {
 
   const link = getDeepLink(uniqueId);
   await ctx.answerCbQuery(content.isActive ? '✅ Yoqildi' : '🔴 Nofaol');
-  await ctx.editMessageText(
-    `📦 <b>${content.title}</b>\n\n` +
-    `🆔 ID: <code>${uniqueId}</code>\n` +
-    `🔗 Link: ${link}\n` +
-    `👁 Ko'rishlar: ${content.viewCount}\n` +
-    `📊 Status: ${content.isActive ? '✅ Aktiv' : '❌ Nofaol'}`,
-    {
-      parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: [
-          [
-            {
-              text: content.isActive ? "🔴 O'chirish" : '🟢 Yoqish',
-              callback_data: `toggle_${uniqueId}`
-            },
-            { text: '🗑 O\'chirish', callback_data: `del_${uniqueId}` }
-          ],
-          [{ text: '🔙 Orqaga', callback_data: `admin_list_${content.type}_0` }]
-        ]
+  try {
+    await ctx.editMessageText(
+      `📦 <b>${content.title}</b>\n\n` +
+      `🆔 ID: <code>${uniqueId}</code>\n` +
+      `🔗 Link: ${link}\n` +
+      `👁 Ko'rishlar: ${content.viewCount}\n` +
+      `📊 Status: ${content.isActive ? '✅ Aktiv' : '❌ Nofaol'}`,
+      {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: content.isActive ? "🔴 O'chirish" : '🟢 Yoqish',
+                callback_data: `toggle_${uniqueId}`
+              },
+              { text: '🗑 O\'chirish', callback_data: `del_${uniqueId}` }
+            ],
+            [{ text: '🔙 Orqaga', callback_data: `admin_list_${content.type}_0` }]
+          ]
+        }
       }
-    }
-  );
+    );
+  } catch (e) {}
 });
 
 composer.action(/^del_(.+)$/, async (ctx) => {
   if (!ctx.adminRole) return ctx.answerCbQuery('❌');
   const uniqueId = ctx.match[1];
   await ctx.answerCbQuery();
-  await ctx.editMessageText("⚠️ Haqiqatan ham o'chirmoqchimisiz?", {
-    reply_markup: {
-      inline_keyboard: [
-        [
-          { text: '✅ Ha', callback_data: `confirm_del_${uniqueId}` },
-          { text: "❌ Yo'q", callback_data: `admin_content_${uniqueId}` }
+  try {
+    await ctx.editMessageText("⚠️ Haqiqatan ham o'chirmoqchimisiz?", {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '✅ Ha', callback_data: `confirm_del_${uniqueId}` },
+            { text: "❌ Yo'q", callback_data: `admin_content_${uniqueId}` }
+          ]
         ]
-      ]
-    }
-  });
+      }
+    });
+  } catch (e) {}
 });
 
 composer.action(/^confirm_del_(.+)$/, async (ctx) => {
@@ -433,7 +447,9 @@ composer.action(/^confirm_del_(.+)$/, async (ctx) => {
   }
 
   await ctx.answerCbQuery("🗑 O'chirildi");
-  await ctx.editMessageText("✅ Kontent o'chirildi.");
+  try {
+    await ctx.editMessageText("✅ Kontent o'chirildi.");
+  } catch (e) {}
 });
 
 module.exports = composer;
