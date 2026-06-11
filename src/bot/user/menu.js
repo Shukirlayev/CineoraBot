@@ -22,22 +22,6 @@ composer.hears('🎬 Kinolar', async (ctx) => showList(ctx, 'movie'));
 composer.hears('📺 Seriallar', async (ctx) => showList(ctx, 'serial'));
 composer.hears('🎌 Anime', async (ctx) => showList(ctx, 'anime'));
 
-composer.hears('📊 Statistika', async (ctx) => {
-  const totalUsers = await User.countDocuments();
-  const movies = await Content.countDocuments({ type: 'movie', isActive: true });
-  const serials = await Content.countDocuments({ type: 'serial', isActive: true });
-  const anime = await Content.countDocuments({ type: 'anime', isActive: true });
-
-  await ctx.reply(
-    `📊 <b>Bot statistikasi</b>\n\n` +
-    `👥 Foydalanuvchilar: <b>${totalUsers}</b>\n` +
-    `🎬 Kinolar: <b>${movies}</b>\n` +
-    `📺 Seriallar: <b>${serials}</b>\n` +
-    `🎌 Anime: <b>${anime}</b>`,
-    { parse_mode: 'HTML' }
-  );
-});
-
 async function showList(ctx, type) {
   const names = { movie: '🎬 Kinolar', serial: '📺 Seriallar', anime: '🎌 Anime' };
   const contents = await Content.find({ type, isActive: true })
@@ -104,7 +88,6 @@ composer.action(/^list_(movie|serial|anime)_(\d+)$/, async (ctx) => {
   try {
     await ctx.editMessageReplyMarkup({ inline_keyboard: buttons });
   } catch (e) {
-    // Bad Request xatolarini ushlash va botni qulatmaslik
     if (!e.message.includes('message is not modified')) {
       console.error(e);
     }
