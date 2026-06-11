@@ -2,8 +2,7 @@ const mainMenu = {
   reply_markup: {
     keyboard: [
       ['🎬 Kinolar', '📺 Seriallar'],
-      ['🎌 Anime', '🔍 Qidirish'],
-      ['📊 Statistika']
+      ['🎌 Anime', '🔍 Qidirish']
     ],
     resize_keyboard: true
   }
