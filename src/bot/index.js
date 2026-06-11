@@ -12,7 +12,16 @@ const adminHandler = require('./admin');
 function createBot() {
   const bot = new Telegraf(process.env.BOT_TOKEN);
 
+  // Standart session middleware'ni ulash (Xatolikni tuzatadi)
   bot.use(session());
+
+  // Har bir context uchun session obyekti bo'sh bo'lsa, initialize qilish
+  bot.use((ctx, next) => {
+    if (ctx.from && !ctx.session) {
+      ctx.session = {};
+    }
+    return next();
+  });
 
   // Foydalanuvchini saqlash
   bot.use(async (ctx, next) => {
