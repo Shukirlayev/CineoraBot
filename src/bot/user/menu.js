@@ -103,7 +103,12 @@ composer.action(/^list_(movie|serial|anime)_(\d+)$/, async (ctx) => {
   await ctx.answerCbQuery();
   try {
     await ctx.editMessageReplyMarkup({ inline_keyboard: buttons });
-  } catch (e) {}
+  } catch (e) {
+    // Bad Request xatolarini ushlash va botni qulatmaslik
+    if (!e.message.includes('message is not modified')) {
+      console.error(e);
+    }
+  }
 });
 
 module.exports = composer;
