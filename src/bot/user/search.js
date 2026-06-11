@@ -3,9 +3,17 @@ const Content = require('../../models/Content');
 
 const composer = new Composer();
 
-composer.hears('🔍 Qidirish', async (ctx) => {
+composer.action('menu_search', async (ctx) => {
+  ctx.session = ctx.session || {};
   ctx.session.searching = true;
-  await ctx.reply("🔍 Qidirmoqchi bo'lgan kino/serial/anime nomini yozing:");
+  await ctx.answerCbQuery();
+  
+  const backBtn = [[{ text: '🔙 Bosh menyu', callback_data: 'main_menu' }]];
+  try {
+    await ctx.editMessageText("🔍 Qidirmoqchi bo'lgan kino/serial/anime nomini yozing:", {
+      reply_markup: { inline_keyboard: backBtn }
+    });
+  } catch (e) {}
 });
 
 composer.on('text', async (ctx, next) => {
@@ -24,9 +32,12 @@ composer.on('text', async (ctx, next) => {
     isActive: true
   }).limit(10);
 
+  const backBtn = [[{ text: '🔙 Bosh menyu', callback_data: 'main_menu' }]];
+
   if (contents.length === 0) {
     return ctx.reply(`❌ "<b>${query}</b>" bo'yicha hech narsa topilmadi.`, {
-      parse_mode: 'HTML'
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: backBtn }
     });
   }
 
@@ -38,6 +49,8 @@ composer.on('text', async (ctx, next) => {
       callback_data: `content_${c.uniqueId}`
     }
   ]);
+
+  buttons.push([{ text: '🔙 Bosh menyu', callback_data: 'main_menu' }]);
 
   await ctx.reply(`🔍 "<b>${query}</b>" bo'yicha natijalar:`, {
     parse_mode: 'HTML',
