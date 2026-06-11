@@ -39,9 +39,9 @@ composer.hears('🔙 Foydalanuvchi menyusi', async (ctx) => {
 
 composer.use(contentHandler);
 composer.use(channelsHandler);
-composer.use(statsHandler);
 composer.use(adminManageHandler);
 composer.use(settingsHandler);
+composer.use(statsHandler); // Statistika faqat admin panel uchun ishlashi ta'minlandi
 
 module.exports = composer;
 module.exports.isAdmin = isAdmin;
