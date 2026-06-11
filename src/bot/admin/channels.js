@@ -25,11 +25,13 @@ async function sendChannelMenu(ctx, edit = false) {
     `Jami: ${channels.length} ta\n` +
     `Majburiy obuna: ${forceSubscribe ? '✅ Yoqilgan' : '❌ O\'chirilgan'}`;
 
-  if (edit) {
-    await ctx.editMessageText(text, { reply_markup: { inline_keyboard: buttons } });
-  } else {
-    await ctx.reply(text, { reply_markup: { inline_keyboard: buttons } });
-  }
+  try {
+    if (edit) {
+      await ctx.editMessageText(text, { reply_markup: { inline_keyboard: buttons } });
+    } else {
+      await ctx.reply(text, { reply_markup: { inline_keyboard: buttons } });
+    }
+  } catch (e) {}
 }
 
 composer.hears('📢 Kanallar', async (ctx) => {
@@ -39,6 +41,7 @@ composer.hears('📢 Kanallar', async (ctx) => {
 
 composer.action('ch_add', async (ctx) => {
   if (!ctx.adminRole) return ctx.answerCbQuery('❌');
+  ctx.session = ctx.session || {};
   ctx.session.adminState = { step: 'add_channel' };
   await ctx.answerCbQuery();
   await ctx.reply(
@@ -60,18 +63,20 @@ composer.action(/^ch_info_(.+)$/, async (ctx) => {
   if (!ch) return ctx.answerCbQuery('❌ Topilmadi');
 
   await ctx.answerCbQuery();
-  await ctx.editMessageText(
-    `📢 <b>${ch.title}</b>\n\nUsername: ${ch.username}\nLink: ${ch.link}`,
-    {
-      parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "🗑 O'chirish", callback_data: `ch_delete_${ch._id}` }],
-          [{ text: '🔙 Orqaga', callback_data: 'ch_back' }]
-        ]
+  try {
+    await ctx.editMessageText(
+      `📢 <b>${ch.title}</b>\n\nUsername: ${ch.username}\nLink: ${ch.link}`,
+      {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "🗑 O'chirish", callback_data: `ch_delete_${ch._id}` }],
+            [{ text: '🔙 Orqaga', callback_data: 'ch_back' }]
+          ]
+        }
       }
-    }
-  );
+    );
+  } catch (e) {}
 });
 
 composer.action(/^ch_delete_(.+)$/, async (ctx) => {
