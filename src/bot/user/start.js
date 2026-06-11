@@ -20,17 +20,30 @@ composer.command('start', async (ctx) => {
   if (deepLinkId) {
     const content = await Content.findOne({ uniqueId: deepLinkId, isActive: true });
     if (!content) {
-      return ctx.reply("❌ Kontent topilmadi yoki o'chirilgan.", mainMenu);
+      return ctx.reply("❌ Kontent topilmadi yoki o'chirilgan.", { reply_markup: mainMenu });
     }
     return sendContent(ctx, content);
   }
 
   await ctx.reply(
     `👋 Salom, <b>${ctx.from.first_name}</b>!\n\n` +
-    `🎬 <b>KinoBot</b>ga xush kelibsiz!\n\n` +
-    `Pastdagi menyudan tanlang:`,
-    { parse_mode: 'HTML', ...mainMenu }
+    `🎬 <b>Cineora</b> botiga xush kelibsiz!\n\n` +
+    `Quyidagi menyu orqali o'zingizga yoqqan kontentni tanlang:`,
+    { parse_mode: 'HTML', reply_markup: mainMenu }
   );
+});
+
+// Bosh menyuga qaytish callback handler
+composer.action('main_menu', async (ctx) => {
+  await ctx.answerCbQuery();
+  try {
+    await ctx.editMessageText(
+      `👋 Salom, <b>${ctx.from.first_name}</b>!\n\n` +
+      `🎬 <b>Cineora</b> botiga xush kelibsiz!\n\n` +
+      `Quyidagi menyu orqali o'zingizga yoqqan kontentni tanlang:`,
+      { parse_mode: 'HTML', reply_markup: mainMenu }
+    );
+  } catch (e) {}
 });
 
 async function sendContent(ctx, content) {
