@@ -1,30 +1,35 @@
 const { Composer } = require('telegraf');
 const Content = require('../../models/Content');
-const { mainMenu } = require('../../utils/keyboards');
+const User = require('../../models/User');
+const { checkSubscription, sendSubscribeMessage } = require('../../utils/checkSubscription');
 const { sendContent } = require('./start');
 
 const composer = new Composer();
 
-// Inline Menu tugmalari uchun action handlerlar
-composer.action('menu_movie', async (ctx) => showListInline(ctx, 'movie'));
-composer.action('menu_serial', async (ctx) => showListInline(ctx, 'serial'));
-composer.action('menu_anime', async (ctx) => showListInline(ctx, 'anime'));
+// Obuna tekshirish (admin emas bo'lsa)
+composer.use(async (ctx, next) => {
+  if (!ctx.message?.text) return next();
+  if (ctx.adminRole) return next();
+  const skip = ['/start', '/admin'];
+  if (skip.some(c => ctx.message.text.startsWith(c))) return next();
 
-async function showListInline(ctx, type) {
+  const result = await checkSubscription(ctx);
+  if (result !== true) return sendSubscribeMessage(ctx, result);
+  return next();
+});
+
+composer.hears('🎬 Kinolar', async (ctx) => showList(ctx, 'movie'));
+composer.hears('📺 Seriallar', async (ctx) => showList(ctx, 'serial'));
+composer.hears('🎌 Anime', async (ctx) => showList(ctx, 'anime'));
+
+async function showList(ctx, type) {
   const names = { movie: '🎬 Kinolar', serial: '📺 Seriallar', anime: '🎌 Anime' };
   const contents = await Content.find({ type, isActive: true })
     .sort({ createdAt: -1 })
     .limit(20);
 
-  await ctx.answerCbQuery();
-
   if (contents.length === 0) {
-    const backBtn = [[{ text: '🔙 Bosh menyu', callback_data: 'main_menu' }]];
-    try {
-      return await ctx.editMessageText(`❌ Hozircha ${names[type]} mavjud emas.`, {
-        reply_markup: { inline_keyboard: backBtn }
-      });
-    } catch (e) {}
+    return ctx.reply(`❌ Hozircha ${names[type]} mavjud emas.`);
   }
 
   const buttons = contents.map(c => [
@@ -35,25 +40,16 @@ async function showListInline(ctx, type) {
   ]);
 
   const total = await Content.countDocuments({ type, isActive: true });
-  
-  // Sahifalash (Paging) navigatsiyasi
-  const navRow = [];
   if (total > 20) {
-    navRow.push({ text: '➡️ Keyingi', callback_data: `list_${type}_1` });
+    buttons.push([{ text: '➡️ Keyingi', callback_data: `list_${type}_1` }]);
   }
-  if (navRow.length > 0) buttons.push(navRow);
 
-  // Har doim bosh menyuga qaytish tugmasini qo'shish
-  buttons.push([{ text: '🔙 Bosh menyu', callback_data: 'main_menu' }]);
-
-  try {
-    await ctx.editMessageText(`🍿 ${names[type]} ro'yxati:`, {
-      reply_markup: { inline_keyboard: buttons }
-    });
-  } catch (e) {}
+  await ctx.reply(`${names[type]} ro'yxati (${total} ta):`, {
+    reply_markup: { inline_keyboard: buttons }
+  });
 }
 
-// Kontent tanlash (Kino/Serial tanlanganda yangi xabar sifatida yuboradi, chunki video/rasm edit qilib bo'lmaydi)
+// Kontent tanlash
 composer.action(/^content_(.+)$/, async (ctx) => {
   const uniqueId = ctx.match[1];
   const content = await Content.findOne({ uniqueId, isActive: true });
@@ -62,7 +58,7 @@ composer.action(/^content_(.+)$/, async (ctx) => {
   await sendContent(ctx, content);
 });
 
-// Sahifalash (Pagination) handleri
+// Sahifalash
 composer.action(/^list_(movie|serial|anime)_(\d+)$/, async (ctx) => {
   const type = ctx.match[1];
   const page = parseInt(ctx.match[2]);
@@ -88,12 +84,14 @@ composer.action(/^list_(movie|serial|anime)_(\d+)$/, async (ctx) => {
   if ((page + 1) * limit < total) nav.push({ text: '➡️', callback_data: `list_${type}_${page + 1}` });
   if (nav.length > 0) buttons.push(nav);
 
-  buttons.push([{ text: '🔙 Bosh menyu', callback_data: 'main_menu' }]);
-
   await ctx.answerCbQuery();
   try {
     await ctx.editMessageReplyMarkup({ inline_keyboard: buttons });
-  } catch (e) {}
+  } catch (e) {
+    if (!e.message.includes('message is not modified')) {
+      console.error(e);
+    }
+  }
 });
 
 module.exports = composer;
