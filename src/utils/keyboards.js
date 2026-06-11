@@ -1,14 +1,11 @@
 const mainMenu = {
-  inline_keyboard: [
-    [
-      { text: '🎬 Kinolar', callback_data: 'menu_movie' },
-      { text: '📺 Seriallar', callback_data: 'menu_serial' }
+  reply_markup: {
+    keyboard: [
+      ['🎬 Kinolar', '📺 Seriallar'],
+      ['🎌 Anime', '🔍 Qidirish']
     ],
-    [
-      { text: '🎌 Anime', callback_data: 'menu_anime' },
-      { text: '🔍 Qidirish', callback_data: 'menu_search' }
-    ]
-  ]
+    resize_keyboard: true
+  }
 };
 
 const adminMainMenu = {
