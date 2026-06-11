@@ -18,11 +18,13 @@ async function sendAdminList(ctx, edit = false) {
 
   const text = `👥 Adminlar ro'yxati (${admins.length} ta):`;
 
-  if (edit) {
-    await ctx.editMessageText(text, { reply_markup: { inline_keyboard: buttons } });
-  } else {
-    await ctx.reply(text, { reply_markup: { inline_keyboard: buttons } });
-  }
+  try {
+    if (edit) {
+      await ctx.editMessageText(text, { reply_markup: { inline_keyboard: buttons } });
+    } else {
+      await ctx.reply(text, { reply_markup: { inline_keyboard: buttons } });
+    }
+  } catch (e) {}
 }
 
 composer.hears('👥 Adminlar', async (ctx) => {
@@ -32,6 +34,7 @@ composer.hears('👥 Adminlar', async (ctx) => {
 
 composer.action('adm_add', async (ctx) => {
   if (ctx.adminRole !== 'superadmin') return ctx.answerCbQuery('❌');
+  ctx.session = ctx.session || {};
   ctx.session.adminState = { step: 'add_admin' };
   await ctx.answerCbQuery();
   await ctx.reply('👤 Yangi admin Telegram ID sini yuboring:\n\n(Avval botga /start bosgan bo\'lishi kerak)');
@@ -43,23 +46,25 @@ composer.action(/^adm_info_(.+)$/, async (ctx) => {
   if (!admin) return ctx.answerCbQuery('❌ Topilmadi');
 
   await ctx.answerCbQuery();
-  await ctx.editMessageText(
-    `👤 Admin ma'lumotlari:\n\n` +
-    `Ism: ${admin.firstName || "Noma'lum"}\n` +
-    `Username: ${admin.username ? '@' + admin.username : "Yo'q"}\n` +
-    `ID: <code>${admin.telegramId}</code>\n` +
-    `Rol: ${admin.role}\n` +
-    `Qo'shilgan: ${admin.addedAt.toLocaleDateString('uz-UZ')}`,
-    {
-      parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "🗑 O'chirish", callback_data: `adm_remove_${admin._id}` }],
-          [{ text: '🔙 Orqaga', callback_data: 'adm_back' }]
-        ]
+  try {
+    await ctx.editMessageText(
+      `👤 Admin ma'lumotlari:\n\n` +
+      `Ism: ${admin.firstName || "Noma'lum"}\n` +
+      `Username: ${admin.username ? '@' + admin.username : "Yo'q"}\n` +
+      `ID: <code>${admin.telegramId}</code>\n` +
+      `Rol: ${admin.role}\n` +
+      `Qo'shilgan: ${admin.addedAt.toLocaleDateString('uz-UZ')}`,
+      {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "🗑 O'chirish", callback_data: `adm_remove_${admin._id}` }],
+            [{ text: '🔙 Orqaga', callback_data: 'adm_back' }]
+          ]
+        }
       }
-    }
-  );
+    );
+  } catch (e) {}
 });
 
 composer.action(/^adm_remove_(.+)$/, async (ctx) => {
