@@ -2,6 +2,7 @@ const { Composer } = require('telegraf');
 const Content = require('../../models/Content');
 const Season = require('../../models/Season');
 const Episode = require('../../models/Episode');
+const Favorite = require('../../models/Favorite');
 const { checkSubscription, sendSubscribeMessage } = require('../../utils/checkSubscription');
 const { mainMenu } = require('../../utils/keyboards');
 
@@ -37,30 +38,32 @@ async function sendContent(ctx, content) {
   try {
     await Content.findByIdAndUpdate(content._id, { $inc: { viewCount: 1 } });
 
+    const isFav = await Favorite.findOne({
+      telegramId: ctx.from.id,
+      contentId: content._id
+    });
+
+    const typeEmoji = { movie: '🎬', serial: '📺', anime: '🎌' };
+    const typeNames = { movie: 'Kino', serial: 'Serial', anime: 'Anime' };
+
     const caption =
-      `🎬 <b>${content.title}</b>\n\n` +
+      `${typeEmoji[content.type]} <b>${content.title}</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n` +
       (content.description ? `📝 ${content.description}\n\n` : '') +
-      (content.year ? `📅 Yil: ${content.year}\n` : '') +
-      (content.languages?.length ? `🌐 Til: ${content.languages.join(', ')}\n` : '') +
-      (content.qualities?.length ? `🎞 Sifat: ${content.qualities.join(', ')}\n` : '');
+      (content.year ? `📅 <b>Yil:</b> ${content.year}\n` : '') +
+      (content.languages?.length ? `🌐 <b>Til:</b> ${content.languages.join(' | ')}\n` : '') +
+      `🏷 <b>Tur:</b> ${typeNames[content.type]}\n` +
+      `👁 <b>Ko'rishlar:</b> ${content.viewCount}`;
 
-    if (content.type === 'movie') {
-      if (!content.fileId) {
-        return ctx.reply('❌ Bu kinoning fayli mavjud emas.');
-      }
-      await ctx.replyWithVideo(content.fileId, { caption, parse_mode: 'HTML' });
-      return;
-    }
+    const watchBtn = content.type === 'movie'
+      ? { text: "▶️ Ko'rish", callback_data: `watch_${content.uniqueId}` }
+      : { text: "📁 Fasllarni ko'rish", callback_data: `seasons_${content.uniqueId}` };
 
-    const seasons = await Season.find({ contentId: content._id }).sort({ seasonNumber: 1 });
+    const favBtn = isFav
+      ? { text: '💔 Sevimlilardan chiqarish', callback_data: `unfav_${content.uniqueId}` }
+      : { text: "❤️ Sevimlilarga qo'shish", callback_data: `fav_${content.uniqueId}` };
 
-    if (seasons.length === 0) {
-      return ctx.reply('❌ Bu serialda hozircha fasllar mavjud emas.');
-    }
-
-    const buttons = seasons.map(s => [
-      { text: `📁 ${s.title || s.seasonNumber + '-Fasl'}`, callback_data: `season_${s._id}` }
-    ]);
+    const buttons = [[watchBtn], [favBtn]];
 
     if (content.poster) {
       await ctx.replyWithPhoto(content.poster, {
@@ -80,6 +83,45 @@ async function sendContent(ctx, content) {
   }
 }
 
+// Kino ko'rish
+composer.action(/^watch_(.+)$/, async (ctx) => {
+  const uniqueId = ctx.match[1];
+  const content = await Content.findOne({ uniqueId, isActive: true });
+  if (!content?.fileId) {
+    return ctx.answerCbQuery('❌ Fayl topilmadi', { show_alert: true });
+  }
+  await ctx.answerCbQuery('⏳ Yuklanmoqda...');
+  try {
+    await ctx.replyWithVideo(content.fileId, {
+      caption: `🎬 <b>${content.title}</b>`,
+      parse_mode: 'HTML'
+    });
+  } catch (e) {
+    await ctx.reply("❌ Video yuborishda xatolik. Qayta urinib ko'ring.");
+  }
+});
+
+// Fasllar ro'yxati
+composer.action(/^seasons_(.+)$/, async (ctx) => {
+  const uniqueId = ctx.match[1];
+  const content = await Content.findOne({ uniqueId, isActive: true });
+  if (!content) return ctx.answerCbQuery('❌ Topilmadi');
+
+  const seasons = await Season.find({ contentId: content._id }).sort({ seasonNumber: 1 });
+  if (seasons.length === 0) return ctx.answerCbQuery("❌ Hozircha fasl yo'q");
+
+  const buttons = seasons.map(s => [
+    { text: `📁 ${s.title || s.seasonNumber + '-Fasl'}`, callback_data: `season_${s._id}` }
+  ]);
+
+  await ctx.answerCbQuery();
+  await ctx.reply(
+    `📺 <b>${content.title}</b> — Fasllar:`,
+    { parse_mode: 'HTML', reply_markup: { inline_keyboard: buttons } }
+  );
+});
+
+// Fasl tanlash — barcha qismlarni yuborish
 composer.action(/^season_(.+)$/, async (ctx) => {
   const seasonId = ctx.match[1];
   try {
@@ -90,18 +132,20 @@ composer.action(/^season_(.+)$/, async (ctx) => {
     if (episodes.length === 0) return ctx.answerCbQuery('❌ Qismlar mavjud emas');
 
     await ctx.answerCbQuery();
-    await ctx.reply(`📺 ${season.title || season.seasonNumber + '-Fasl'} qismlari yuborilmoqda...`);
+    await ctx.reply(
+      `📺 <b>${season.title || season.seasonNumber + '-Fasl'}</b> — ${episodes.length} ta qism yuborilmoqda...`,
+      { parse_mode: 'HTML' }
+    );
 
     for (const ep of episodes) {
       const caption =
-        `📺 ${ep.title || ep.episodeNumber + '-Qism'}` +
+        `📺 <b>${ep.title || ep.episodeNumber + '-Qism'}</b>` +
         (ep.quality ? ` | ${ep.quality}` : '') +
         (ep.language ? ` | ${ep.language}` : '');
       try {
-        await ctx.replyWithVideo(ep.fileId, { caption });
+        await ctx.replyWithVideo(ep.fileId, { caption, parse_mode: 'HTML' });
         await new Promise(r => setTimeout(r, 400));
       } catch (e) {
-        console.error(`Episode yuborishda xato (${ep.episodeNumber}):`, e.message);
         await ctx.reply(`❌ ${ep.episodeNumber}-Qism yuborishda xatolik`);
       }
     }
@@ -109,6 +153,58 @@ composer.action(/^season_(.+)$/, async (ctx) => {
     console.error('season action xatosi:', err.message);
     await ctx.answerCbQuery('❌ Xatolik yuz berdi');
   }
+});
+
+// Sevimlilarga qo'shish
+composer.action(/^fav_(.+)$/, async (ctx) => {
+  const uniqueId = ctx.match[1];
+  const content = await Content.findOne({ uniqueId });
+  if (!content) return ctx.answerCbQuery('❌ Topilmadi');
+
+  try {
+    await Favorite.create({
+      telegramId: ctx.from.id,
+      contentId: content._id,
+      uniqueId: content.uniqueId
+    });
+    await ctx.answerCbQuery("❤️ Sevimlilarga qo'shildi!");
+
+    try {
+      const keyboard = ctx.callbackQuery.message.reply_markup?.inline_keyboard || [];
+      const newKeyboard = keyboard.map(row =>
+        row.map(btn =>
+          btn.callback_data === `fav_${uniqueId}`
+            ? { text: '💔 Sevimlilardan chiqarish', callback_data: `unfav_${uniqueId}` }
+            : btn
+        )
+      );
+      await ctx.editMessageReplyMarkup({ inline_keyboard: newKeyboard });
+    } catch (e) {}
+  } catch (e) {
+    await ctx.answerCbQuery('❌ Allaqachon sevimlilarda!');
+  }
+});
+
+// Sevimlilardan chiqarish
+composer.action(/^unfav_(.+)$/, async (ctx) => {
+  const uniqueId = ctx.match[1];
+  const content = await Content.findOne({ uniqueId });
+  if (!content) return ctx.answerCbQuery('❌ Topilmadi');
+
+  await Favorite.deleteOne({ telegramId: ctx.from.id, contentId: content._id });
+  await ctx.answerCbQuery('💔 Sevimlilardan chiqarildi');
+
+  try {
+    const keyboard = ctx.callbackQuery.message.reply_markup?.inline_keyboard || [];
+    const newKeyboard = keyboard.map(row =>
+      row.map(btn =>
+        btn.callback_data === `unfav_${uniqueId}`
+          ? { text: "❤️ Sevimlilarga qo'shish", callback_data: `fav_${uniqueId}` }
+          : btn
+      )
+    );
+    await ctx.editMessageReplyMarkup({ inline_keyboard: newKeyboard });
+  } catch (e) {}
 });
 
 module.exports = composer;
