@@ -10,23 +10,32 @@ composer.use(async (ctx, next) => {
   if (ctx.adminRole) return next();
   const skip = ['/start', '/admin'];
   if (skip.some(c => ctx.message.text.startsWith(c))) return next();
-
   const result = await checkSubscription(ctx);
   if (result !== true) return sendSubscribeMessage(ctx, result);
   return next();
 });
+
+async function deletePrevMsg(ctx) {
+  if (ctx.session?.lastListMsgId) {
+    try {
+      await ctx.telegram.deleteMessage(ctx.chat.id, ctx.session.lastListMsgId);
+    } catch (e) {}
+    ctx.session.lastListMsgId = null;
+  }
+}
 
 composer.hears('🎬 Kinolar', async (ctx) => showList(ctx, 'movie'));
 composer.hears('📺 Seriallar', async (ctx) => showList(ctx, 'serial'));
 composer.hears('🎌 Anime', async (ctx) => showList(ctx, 'anime'));
 
 composer.hears('📊 Statistika', async (ctx) => {
+  await deletePrevMsg(ctx);
   const totalUsers = await User.countDocuments();
   const movies = await Content.countDocuments({ type: 'movie', isActive: true });
   const serials = await Content.countDocuments({ type: 'serial', isActive: true });
   const anime = await Content.countDocuments({ type: 'anime', isActive: true });
 
-  await ctx.reply(
+  const msg = await ctx.reply(
     `📊 <b>Bot statistikasi</b>\n\n` +
     `👥 Foydalanuvchilar: <b>${totalUsers}</b>\n` +
     `🎬 Kinolar: <b>${movies}</b>\n` +
@@ -34,16 +43,21 @@ composer.hears('📊 Statistika', async (ctx) => {
     `🎌 Anime: <b>${anime}</b>`,
     { parse_mode: 'HTML' }
   );
+  ctx.session.lastListMsgId = msg.message_id;
 });
 
 async function showList(ctx, type) {
+  await deletePrevMsg(ctx);
+
   const names = { movie: '🎬 Kinolar', serial: '📺 Seriallar', anime: '🎌 Anime' };
   const contents = await Content.find({ type, isActive: true })
     .sort({ createdAt: -1 })
     .limit(20);
 
   if (contents.length === 0) {
-    return ctx.reply(`❌ Hozircha ${names[type]} mavjud emas.`);
+    const msg = await ctx.reply(`❌ Hozircha ${names[type]} mavjud emas.`);
+    ctx.session.lastListMsgId = msg.message_id;
+    return;
   }
 
   const total = await Content.countDocuments({ type, isActive: true });
@@ -59,9 +73,11 @@ async function showList(ctx, type) {
     buttons.push([{ text: '➡️ Keyingi', callback_data: `list_${type}_1` }]);
   }
 
-  await ctx.reply(`${names[type]} ro'yxati (${total} ta):`, {
+  const msg = await ctx.reply(`${names[type]} — <b>${total} ta</b>:`, {
+    parse_mode: 'HTML',
     reply_markup: { inline_keyboard: buttons }
   });
+  ctx.session.lastListMsgId = msg.message_id;
 }
 
 composer.action(/^content_(.+)$/, async (ctx) => {
@@ -101,11 +117,7 @@ composer.action(/^list_(movie|serial|anime)_(\d+)$/, async (ctx) => {
   await ctx.answerCbQuery();
   try {
     await ctx.editMessageReplyMarkup({ inline_keyboard: buttons });
-  } catch (e) {
-    if (!e.message?.includes('message is not modified')) {
-      console.error(e);
-    }
-  }
+  } catch (e) {}
 });
 
 module.exports = composer;
