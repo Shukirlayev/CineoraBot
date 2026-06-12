@@ -10,8 +10,7 @@
   "dependencies": {
     "telegraf": "^4.15.3",
     "mongoose": "^8.0.3",
-    "dotenv": "^16.3.1",
-    "@telegraf/session": "^2.0.0"
+    "dotenv": "^16.3.1"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
