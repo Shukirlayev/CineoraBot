@@ -1,8 +1,9 @@
 const mainMenu = {
   reply_markup: {
     keyboard: [
+      ['🔍 Qidirish'],
       ['🎬 Kinolar', '📺 Seriallar'],
-      ['🎌 Anime', '🔍 Qidirish']
+      ['🎌 Anime', '❤️ Sevimlilar']
     ],
     resize_keyboard: true
   }
