@@ -1,4 +1,7 @@
-const { Telegraf, session } = require('telegraf');
+const { Telegraf } = require('telegraf');
+const { MongoDBAdapter, known } = require('@telegraf/session/mongodb');
+const { session } = require('telegraf');
+const { MongoClient } = require('mongodb');
 const User = require('../models/User');
 const Content = require('../models/Content');
 const { checkSubscription, sendSubscribeMessage } = require('../utils/checkSubscription');
@@ -8,18 +11,23 @@ const startHandler = require('./user/start');
 const menuHandler = require('./user/menu');
 const searchHandler = require('./user/search');
 const adminHandler = require('./admin');
+const broadcastHandler = require('./admin/broadcast');
 
-function createBot() {
+async function createBot() {
   const bot = new Telegraf(process.env.BOT_TOKEN);
 
-  // Standart session middleware'ni ulash (Xatolikni tuzatadi)
-  bot.use(session());
+  // MongoDB session store
+  const client = new MongoClient(process.env.MONGODB_URI);
+  await client.connect();
+  const db = client.db();
 
-  // Har bir context uchun session obyekti bo'sh bo'lsa, initialize qilish
+  bot.use(session({
+    store: MongoDBAdapter({ collection: db.collection('sessions') })
+  }));
+
+  // Session null bo'lsa initialize qilish
   bot.use((ctx, next) => {
-    if (ctx.from && !ctx.session) {
-      ctx.session = {};
-    }
+    if (!ctx.session) ctx.session = {};
     return next();
   });
 
@@ -43,6 +51,7 @@ function createBot() {
 
   bot.use(startHandler);
   bot.use(adminHandler);
+  bot.use(broadcastHandler);
   bot.use(menuHandler);
   bot.use(searchHandler);
 
@@ -50,7 +59,7 @@ function createBot() {
   bot.action('check_subscribe', async (ctx) => {
     const result = await checkSubscription(ctx);
     if (result === true) {
-      await ctx.answerCbQuery("✅ Obuna tasdiqlandi!");
+      await ctx.answerCbQuery('✅ Obuna tasdiqlandi!');
       try { await ctx.deleteMessage(); } catch (e) {}
 
       if (ctx.session?.pendingDeepLink) {
