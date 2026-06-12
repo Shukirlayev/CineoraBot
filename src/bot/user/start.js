@@ -1,97 +1,115 @@
 const { Composer } = require('telegraf');
 const Content = require('../../models/Content');
-const User = require('../../models/User');
+const Season = require('../../models/Season');
+const Episode = require('../../models/Episode');
 const { checkSubscription, sendSubscribeMessage } = require('../../utils/checkSubscription');
-const { sendContent } = require('./start');
+const { mainMenu } = require('../../utils/keyboards');
 
 const composer = new Composer();
 
-// Obuna tekshirish (admin emas bo'lsa)
-composer.use(async (ctx, next) => {
-  if (!ctx.message?.text) return next();
-  if (ctx.adminRole) return next();
-  const skip = ['/start', '/admin'];
-  if (skip.some(c => ctx.message.text.startsWith(c))) return next();
+composer.command('start', async (ctx) => {
+  const args = ctx.message.text.split(' ');
+  const deepLinkId = args[1];
 
-  const result = await checkSubscription(ctx);
-  if (result !== true) return sendSubscribeMessage(ctx, result);
-  return next();
+  const subResult = await checkSubscription(ctx);
+  if (subResult !== true) {
+    if (deepLinkId) ctx.session.pendingDeepLink = deepLinkId;
+    return sendSubscribeMessage(ctx, subResult);
+  }
+
+  if (deepLinkId) {
+    const content = await Content.findOne({ uniqueId: deepLinkId, isActive: true });
+    if (!content) {
+      return ctx.reply("❌ Kontent topilmadi yoki o'chirilgan.", mainMenu);
+    }
+    return sendContent(ctx, content);
+  }
+
+  await ctx.reply(
+    `👋 Salom, <b>${ctx.from.first_name}</b>!\n\n` +
+    `🎬 <b>CineoraBot</b>ga xush kelibsiz!\n\n` +
+    `Pastdagi menyudan tanlang:`,
+    { parse_mode: 'HTML', ...mainMenu }
+  );
 });
 
-composer.hears('🎬 Kinolar', async (ctx) => showList(ctx, 'movie'));
-composer.hears('📺 Seriallar', async (ctx) => showList(ctx, 'serial'));
-composer.hears('🎌 Anime', async (ctx) => showList(ctx, 'anime'));
+async function sendContent(ctx, content) {
+  try {
+    await Content.findByIdAndUpdate(content._id, { $inc: { viewCount: 1 } });
 
-async function showList(ctx, type) {
-  const names = { movie: '🎬 Kinolar', serial: '📺 Seriallar', anime: '🎌 Anime' };
-  const contents = await Content.find({ type, isActive: true })
-    .sort({ createdAt: -1 })
-    .limit(20);
+    const caption =
+      `🎬 <b>${content.title}</b>\n\n` +
+      (content.description ? `📝 ${content.description}\n\n` : '') +
+      (content.year ? `📅 Yil: ${content.year}\n` : '') +
+      (content.languages?.length ? `🌐 Til: ${content.languages.join(', ')}\n` : '') +
+      (content.qualities?.length ? `🎞 Sifat: ${content.qualities.join(', ')}\n` : '');
 
-  if (contents.length === 0) {
-    return ctx.reply(`❌ Hozircha ${names[type]} mavjud emas.`);
-  }
-
-  const buttons = contents.map(c => [
-    {
-      text: `${c.title}${c.year ? ` (${c.year})` : ''}`,
-      callback_data: `content_${c.uniqueId}`
+    if (content.type === 'movie') {
+      if (!content.fileId) {
+        return ctx.reply('❌ Bu kinoning fayli mavjud emas.');
+      }
+      await ctx.replyWithVideo(content.fileId, { caption, parse_mode: 'HTML' });
+      return;
     }
-  ]);
 
-  const total = await Content.countDocuments({ type, isActive: true });
-  if (total > 20) {
-    buttons.push([{ text: '➡️ Keyingi', callback_data: `list_${type}_1` }]);
+    const seasons = await Season.find({ contentId: content._id }).sort({ seasonNumber: 1 });
+
+    if (seasons.length === 0) {
+      return ctx.reply('❌ Bu serialda hozircha fasllar mavjud emas.');
+    }
+
+    const buttons = seasons.map(s => [
+      { text: `📁 ${s.title || s.seasonNumber + '-Fasl'}`, callback_data: `season_${s._id}` }
+    ]);
+
+    if (content.poster) {
+      await ctx.replyWithPhoto(content.poster, {
+        caption,
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: buttons }
+      });
+    } else {
+      await ctx.reply(caption, {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: buttons }
+      });
+    }
+  } catch (err) {
+    console.error('sendContent xatosi:', err.message);
+    await ctx.reply('❌ Kontent yuborishda xatolik yuz berdi.');
   }
-
-  await ctx.reply(`${names[type]} ro'yxati (${total} ta):`, {
-    reply_markup: { inline_keyboard: buttons }
-  });
 }
 
-// Kontent tanlash
-composer.action(/^content_(.+)$/, async (ctx) => {
-  const uniqueId = ctx.match[1];
-  const content = await Content.findOne({ uniqueId, isActive: true });
-  if (!content) return ctx.answerCbQuery('❌ Topilmadi');
-  await ctx.answerCbQuery();
-  await sendContent(ctx, content);
-});
-
-// Sahifalash
-composer.action(/^list_(movie|serial|anime)_(\d+)$/, async (ctx) => {
-  const type = ctx.match[1];
-  const page = parseInt(ctx.match[2]);
-  const limit = 20;
-
-  const contents = await Content.find({ type, isActive: true })
-    .sort({ createdAt: -1 })
-    .skip(page * limit)
-    .limit(limit);
-
-  const total = await Content.countDocuments({ type, isActive: true });
-  if (contents.length === 0) return ctx.answerCbQuery("Boshqa kontent yo'q");
-
-  const buttons = contents.map(c => [
-    {
-      text: `${c.title}${c.year ? ` (${c.year})` : ''}`,
-      callback_data: `content_${c.uniqueId}`
-    }
-  ]);
-
-  const nav = [];
-  if (page > 0) nav.push({ text: '⬅️', callback_data: `list_${type}_${page - 1}` });
-  if ((page + 1) * limit < total) nav.push({ text: '➡️', callback_data: `list_${type}_${page + 1}` });
-  if (nav.length > 0) buttons.push(nav);
-
-  await ctx.answerCbQuery();
+composer.action(/^season_(.+)$/, async (ctx) => {
+  const seasonId = ctx.match[1];
   try {
-    await ctx.editMessageReplyMarkup({ inline_keyboard: buttons });
-  } catch (e) {
-    if (!e.message.includes('message is not modified')) {
-      console.error(e);
+    const season = await Season.findById(seasonId);
+    if (!season) return ctx.answerCbQuery('❌ Fasl topilmadi');
+
+    const episodes = await Episode.find({ seasonId }).sort({ episodeNumber: 1 });
+    if (episodes.length === 0) return ctx.answerCbQuery('❌ Qismlar mavjud emas');
+
+    await ctx.answerCbQuery();
+    await ctx.reply(`📺 ${season.title || season.seasonNumber + '-Fasl'} qismlari yuborilmoqda...`);
+
+    for (const ep of episodes) {
+      const caption =
+        `📺 ${ep.title || ep.episodeNumber + '-Qism'}` +
+        (ep.quality ? ` | ${ep.quality}` : '') +
+        (ep.language ? ` | ${ep.language}` : '');
+      try {
+        await ctx.replyWithVideo(ep.fileId, { caption });
+        await new Promise(r => setTimeout(r, 400));
+      } catch (e) {
+        console.error(`Episode yuborishda xato (${ep.episodeNumber}):`, e.message);
+        await ctx.reply(`❌ ${ep.episodeNumber}-Qism yuborishda xatolik`);
+      }
     }
+  } catch (err) {
+    console.error('season action xatosi:', err.message);
+    await ctx.answerCbQuery('❌ Xatolik yuz berdi');
   }
 });
 
 module.exports = composer;
+module.exports.sendContent = sendContent;
