@@ -11,6 +11,7 @@ const searchHandler = require('./user/search');
 const favoritesHandler = require('./user/favorites');
 const adminHandler = require('./admin');
 const broadcastHandler = require('./admin/broadcast');
+const requestsHandler = require('./admin/requests');
 
 async function createBot() {
   const bot = new Telegraf(process.env.BOT_TOKEN);
@@ -37,10 +38,67 @@ async function createBot() {
   bot.use(startHandler);
   bot.use(adminHandler);
   bot.use(broadcastHandler);
+  bot.use(requestsHandler);
   bot.use(menuHandler);
   bot.use(searchHandler);
   bot.use(favoritesHandler);
 
+  // ── Inline mode ──────────────────────────────────────────────
+  bot.on('inline_query', async (ctx) => {
+    const query = ctx.inlineQuery.query.trim();
+
+    if (!query || query.length < 2) {
+      return ctx.answerInlineQuery([], {
+        switch_pm_text: "🔍 Kino nomi yozing...",
+        switch_pm_parameter: 'search',
+        cache_time: 0
+      });
+    }
+
+    const contents = await Content.find({
+      isActive: true,
+      $or: [
+        { title: { $regex: query, $options: 'i' } },
+        { searchTags: { $elemMatch: { $regex: query, $options: 'i' } } }
+      ]
+    }).sort({ title: 1 }).limit(10);
+
+    if (contents.length === 0) {
+      return ctx.answerInlineQuery([], {
+        switch_pm_text: `❌ "${query}" topilmadi`,
+        switch_pm_parameter: 'search',
+        cache_time: 0
+      });
+    }
+
+    const typeEmoji = { movie: '🎬', serial: '📺', anime: '🎌' };
+    const typeNames = { movie: 'Kino', serial: 'Serial', anime: 'Anime' };
+
+    const results = contents.map(c => ({
+      type: 'article',
+      id: c.uniqueId,
+      title: `${typeEmoji[c.type]} ${c.title}${c.year ? ` (${c.year})` : ''}`,
+      description: `${typeNames[c.type]}${c.searchTags?.length ? ' | ' + c.searchTags.slice(0, 3).join(', ') : ''}`,
+      input_message_content: {
+        message_text:
+          `${typeEmoji[c.type]} <b>${c.title}</b>${c.year ? ` (${c.year})` : ''}\n\n` +
+          `🔗 Ko'rish uchun:\nhttps://t.me/${process.env.BOT_USERNAME}?start=${c.uniqueId}`,
+        parse_mode: 'HTML'
+      },
+      reply_markup: {
+        inline_keyboard: [[
+          {
+            text: `▶️ Ko'rish`,
+            url: `https://t.me/${process.env.BOT_USERNAME}?start=${c.uniqueId}`
+          }
+        ]]
+      }
+    }));
+
+    await ctx.answerInlineQuery(results, { cache_time: 30 });
+  });
+
+  // ── Obuna tekshirish ─────────────────────────────────────────
   bot.action('check_subscribe', async (ctx) => {
     const result = await checkSubscription(ctx);
     if (result === true) {
