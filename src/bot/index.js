@@ -1,6 +1,5 @@
-const { Telegraf, session } = require('telegraf');
-const { MongoDB } = require('@telegraf/session/mongodb');
-const { MongoClient } = require('mongodb');
+const { Telegraf } = require('telegraf');
+const mongoSession = require('../utils/mongoSession');
 const User = require('../models/User');
 const Content = require('../models/Content');
 const { checkSubscription, sendSubscribeMessage } = require('../utils/checkSubscription');
@@ -15,19 +14,8 @@ const broadcastHandler = require('./admin/broadcast');
 async function createBot() {
   const bot = new Telegraf(process.env.BOT_TOKEN);
 
-  // MongoDB session store
-  const client = new MongoClient(process.env.MONGODB_URI);
-  await client.connect();
-  const db = client.db();
-
-  const store = MongoDB({ collection: db.collection('sessions') });
-  bot.use(session({ store }));
-
-  // Session null bo'lsa initialize qilish
-  bot.use((ctx, next) => {
-    if (!ctx.session) ctx.session = {};
-    return next();
-  });
+  // MongoDB session
+  bot.use(mongoSession());
 
   // Foydalanuvchini saqlash
   bot.use(async (ctx, next) => {
