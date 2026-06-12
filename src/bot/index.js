@@ -1,6 +1,5 @@
-const { Telegraf } = require('telegraf');
-const { MongoDBAdapter, known } = require('@telegraf/session/mongodb');
-const { session } = require('telegraf');
+const { Telegraf, session } = require('telegraf');
+const { MongoDB } = require('@telegraf/session/mongodb');
 const { MongoClient } = require('mongodb');
 const User = require('../models/User');
 const Content = require('../models/Content');
@@ -21,9 +20,8 @@ async function createBot() {
   await client.connect();
   const db = client.db();
 
-  bot.use(session({
-    store: MongoDBAdapter({ collection: db.collection('sessions') })
-  }));
+  const store = MongoDB({ collection: db.collection('sessions') });
+  bot.use(session({ store }));
 
   // Session null bo'lsa initialize qilish
   bot.use((ctx, next) => {
