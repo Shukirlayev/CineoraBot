@@ -86,15 +86,6 @@ composer.action('add_cancel', async (ctx) => {
   try { await ctx.editMessageText('❌ Bekor qilindi.'); } catch (e) {}
 });
 
-// Matn handleri ichida switch DAN OLDIN:
-composer.command('cancel', async (ctx) => {
-  if (!ctx.adminRole) return;
-  ctx.session.adminState = null;
-  await ctx.reply('❌ Bekor qilindi.');
-});
-
-
-
 // ─── Matn handleri ───────────────────────────────────────────────
 composer.on('text', async (ctx, next) => {
   if (!ctx.adminRole) return next();
