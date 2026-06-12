@@ -18,6 +18,7 @@ async function createBot() {
 
   bot.use(mongoSession());
 
+  // Foydalanuvchini saqlash
   bot.use(async (ctx, next) => {
     if (!ctx.from) return next();
     try {
@@ -43,13 +44,30 @@ async function createBot() {
   bot.use(searchHandler);
   bot.use(favoritesHandler);
 
-  // ── Inline mode ──────────────────────────────────────────────
+  // ── /search command — inline qidiruvni ochadi ──────────────
+  bot.command('search', async (ctx) => {
+    await ctx.reply(
+      '🍿 Kinolarni tezkor qidirish uchun quyidagi tugmani bosing:',
+      {
+        reply_markup: {
+          inline_keyboard: [[
+            {
+              text: '🎬 Qidiruvni boshlash',
+              switch_inline_query_current_chat: ''
+            }
+          ]]
+        }
+      }
+    );
+  });
+
+  // ── Inline query ───────────────────────────────────────────
   bot.on('inline_query', async (ctx) => {
     const query = ctx.inlineQuery.query.trim();
 
     if (!query || query.length < 2) {
       return ctx.answerInlineQuery([], {
-        switch_pm_text: "🔍 Kino nomi yozing...",
+        switch_pm_text: '🔍 Kino nomini yozing...',
         switch_pm_parameter: 'search',
         cache_time: 0
       });
@@ -72,17 +90,16 @@ async function createBot() {
     }
 
     const typeEmoji = { movie: '🎬', serial: '📺', anime: '🎌' };
-    const typeNames = { movie: 'Kino', serial: 'Serial', anime: 'Anime' };
 
     const results = contents.map(c => ({
       type: 'article',
       id: c.uniqueId,
       title: `${typeEmoji[c.type]} ${c.title}${c.year ? ` (${c.year})` : ''}`,
-      description: `${typeNames[c.type]}${c.searchTags?.length ? ' | ' + c.searchTags.slice(0, 3).join(', ') : ''}`,
+      description: c.searchTags?.slice(0, 3).join(', ') || '',
       input_message_content: {
         message_text:
           `${typeEmoji[c.type]} <b>${c.title}</b>${c.year ? ` (${c.year})` : ''}\n\n` +
-          `🔗 Ko'rish uchun:\nhttps://t.me/${process.env.BOT_USERNAME}?start=${c.uniqueId}`,
+          `▶️ Ko'rish uchun bosing:`,
         parse_mode: 'HTML'
       },
       reply_markup: {
@@ -98,7 +115,50 @@ async function createBot() {
     await ctx.answerInlineQuery(results, { cache_time: 30 });
   });
 
-  // ── Obuna tekshirish ─────────────────────────────────────────
+  // ── chosen_inline_result — tanlangan kontentni yuborish ───
+  bot.on('chosen_inline_result', async (ctx) => {
+    const uniqueId = ctx.chosenInlineResult.result_id;
+    const userId = ctx.from.id;
+
+    const content = await Content.findOne({ uniqueId, isActive: true });
+    if (!content) return;
+
+    try {
+      if (content.type === 'movie' && content.fileId) {
+        const caption =
+          `🎬 <b>${content.title}</b>` +
+          (content.year ? ` (${content.year})` : '') +
+          (content.languages?.length ? `\n🌐 ${content.languages.join(' | ')}` : '');
+
+        await ctx.telegram.sendVideo(userId, content.fileId, {
+          caption,
+          parse_mode: 'HTML'
+        });
+      } else {
+        // Serial/Anime — deeplink yuborish
+        await ctx.telegram.sendMessage(
+          userId,
+          `${content.type === 'anime' ? '🎌' : '📺'} <b>${content.title}</b>${content.year ? ` (${content.year})` : ''}\n\n` +
+          `▶️ Ko'rish uchun bosing:`,
+          {
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: [[
+                {
+                  text: "▶️ Ko'rish",
+                  url: `https://t.me/${process.env.BOT_USERNAME}?start=${content.uniqueId}`
+                }
+              ]]
+            }
+          }
+        );
+      }
+    } catch (e) {
+      console.error('chosen_inline_result xatosi:', e.message);
+    }
+  });
+
+  // ── Obuna tekshirish ───────────────────────────────────────
   bot.action('check_subscribe', async (ctx) => {
     const result = await checkSubscription(ctx);
     if (result === true) {
