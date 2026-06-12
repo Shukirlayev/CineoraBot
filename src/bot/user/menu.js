@@ -27,14 +27,35 @@ composer.hears('🎬 Kinolar', async (ctx) => { await deletePrevMsg(ctx); await 
 composer.hears('📺 Seriallar', async (ctx) => { await deletePrevMsg(ctx); await showList(ctx, 'serial', 0); });
 composer.hears('🎌 Anime', async (ctx) => { await deletePrevMsg(ctx); await showList(ctx, 'anime', 0); });
 
+// 🎲 Tasodifiy
+composer.hears('🎲 Tasodifiy', async (ctx) => {
+  await deletePrevMsg(ctx);
+
+  const count = await Content.countDocuments({ isActive: true });
+  if (count === 0) return ctx.reply('❌ Hozircha kontent mavjud emas.');
+
+  const random = Math.floor(Math.random() * count);
+  const content = await Content.findOne({ isActive: true }).skip(random);
+  if (!content) return ctx.reply('❌ Xatolik yuz berdi.');
+
+  await ctx.answerCbQuery?.();
+  const { sendContent } = require('./start');
+  await sendContent(ctx, content);
+});
+
 composer.hears('📊 Statistika', async (ctx) => {
   await deletePrevMsg(ctx);
   const totalUsers = await User.countDocuments();
   const movies = await Content.countDocuments({ type: 'movie', isActive: true });
   const serials = await Content.countDocuments({ type: 'serial', isActive: true });
   const anime = await Content.countDocuments({ type: 'anime', isActive: true });
+
   const msg = await ctx.reply(
-    `📊 <b>Bot statistikasi</b>\n\n👥 Foydalanuvchilar: <b>${totalUsers}</b>\n🎬 Kinolar: <b>${movies}</b>\n📺 Seriallar: <b>${serials}</b>\n🎌 Anime: <b>${anime}</b>`,
+    `📊 <b>Bot statistikasi</b>\n\n` +
+    `👥 Foydalanuvchilar: <b>${totalUsers}</b>\n` +
+    `🎬 Kinolar: <b>${movies}</b>\n` +
+    `📺 Seriallar: <b>${serials}</b>\n` +
+    `🎌 Anime: <b>${anime}</b>`,
     { parse_mode: 'HTML' }
   );
   ctx.session.lastListMsgId = msg.message_id;
@@ -73,7 +94,6 @@ async function showList(ctx, type, page) {
   ctx.session.lastListMsgId = msg.message_id;
 }
 
-// Kontent tanlash
 composer.action(/^content_(.+)$/, async (ctx) => {
   const content = await Content.findOne({ uniqueId: ctx.match[1], isActive: true });
   if (!content) return ctx.answerCbQuery('❌ Topilmadi');
@@ -82,13 +102,11 @@ composer.action(/^content_(.+)$/, async (ctx) => {
   await sendContent(ctx, content);
 });
 
-// Sahifalash
 composer.action(/^list_(movie|serial|anime)_(\d+)$/, async (ctx) => {
   const type = ctx.match[1];
   const page = parseInt(ctx.match[2]);
   const names = { movie: '🎬 Kinolar', serial: '📺 Seriallar', anime: '🎌 Anime' };
   const total = await Content.countDocuments({ type, isActive: true });
-
   if (total === 0) return ctx.answerCbQuery("Kontent yo'q");
 
   const contents = await Content.find({ type, isActive: true })
