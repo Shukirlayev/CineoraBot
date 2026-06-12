@@ -3,7 +3,8 @@ const mainMenu = {
     keyboard: [
       ['🔍 Qidirish'],
       ['🎬 Kinolar', '📺 Seriallar'],
-      ['🎌 Anime', '❤️ Sevimlilar']
+      ['🎌 Anime', '🎲 Tasodifiy'],
+      ['❤️ Sevimlilar']
     ],
     resize_keyboard: true
   }
@@ -13,9 +14,10 @@ const adminMainMenu = {
   reply_markup: {
     keyboard: [
       ["➕ Kontent qo'shish", '📋 Kontentlar'],
+      ['📣 Broadcast', '📊 Statistika'],
       ['📢 Kanallar', '👥 Adminlar'],
-      ['📊 Statistika', '⚙️ Sozlamalar'],
-      ['📣 Broadcast', '🔙 Foydalanuvchi menyusi']
+      ['📬 So\'rovlar', '⚙️ Sozlamalar'],
+      ['🔙 Foydalanuvchi menyusi']
     ],
     resize_keyboard: true
   }
