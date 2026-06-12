@@ -4,7 +4,7 @@ const { createBot } = require('./src/bot');
 
 async function main() {
   await connectDB();
-  const bot = createBot();
+  const bot = await createBot();
   await bot.launch();
   console.log('🤖 Bot ishga tushdi!');
   process.once('SIGINT', () => bot.stop('SIGINT'));
