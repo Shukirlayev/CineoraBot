@@ -2,15 +2,61 @@ const { Composer } = require('telegraf');
 const Content = require('../../models/Content');
 const Season = require('../../models/Season');
 const Episode = require('../../models/Episode');
+const SearchRequest = require('../../models/SearchRequest');
 const { generateUniqueId, getDeepLink } = require('../../utils/helpers');
 
 const composer = new Composer();
 
+// ─── Kontent kartochkasini ko'rsatish ───────────────────────────
+async function showContentCard(ctx, content, useEdit = false) {
+  const link = getDeepLink(content.uniqueId);
+  const typeNames = { movie: '🎬 Kino', serial: '📺 Serial', anime: '🎌 Anime' };
+
+  const text =
+    `📦 <b>${content.title}</b>\n` +
+    `━━━━━━━━━━━━━━━━\n` +
+    `🆔 <code>${content.uniqueId}</code>\n` +
+    `🏷 ${typeNames[content.type]}\n` +
+    (content.searchTags?.length ? `🔍 ${content.searchTags.join(', ')}\n` : `🔍 Kalit so'zlar yo'q\n`) +
+    (content.description ? `📝 ${content.description}\n` : '') +
+    (content.year ? `📅 ${content.year}\n` : '') +
+    `👁 Ko'rishlar: ${content.viewCount}\n` +
+    `📊 ${content.isActive ? '✅ Aktiv' : '❌ Nofaol'}\n` +
+    `🔗 ${link}`;
+
+  const keyboard = {
+    inline_keyboard: [
+      [
+        { text: '✏️ Nom', callback_data: `ef_${content.uniqueId}_title` },
+        { text: '🔍 Kalit so\'zlar', callback_data: `ef_${content.uniqueId}_tags` }
+      ],
+      [
+        { text: '📝 Tavsif', callback_data: `ef_${content.uniqueId}_desc` },
+        { text: '📅 Yil', callback_data: `ef_${content.uniqueId}_year` }
+      ],
+      [
+        {
+          text: content.isActive ? '🔴 Nofaol qilish' : '🟢 Faol qilish',
+          callback_data: `toggle_${content.uniqueId}`
+        },
+        { text: "🗑 O'chirish", callback_data: `del_${content.uniqueId}` }
+      ],
+      [{ text: "🔙 Ro'yxatga qaytish", callback_data: `admin_list_${content.type}_0` }]
+    ]
+  };
+
+  const opts = { parse_mode: 'HTML', reply_markup: keyboard };
+  if (useEdit) {
+    try { await ctx.editMessageText(text, opts); } catch (e) { await ctx.reply(text, opts); }
+  } else {
+    await ctx.reply(text, opts);
+  }
+}
+
+// ─── Kontent qo'shish ────────────────────────────────────────────
 composer.hears("➕ Kontent qo'shish", async (ctx) => {
   if (!ctx.adminRole) return;
-  ctx.session = ctx.session || {};
   ctx.session.adminState = { step: 'select_type' };
-
   await ctx.reply('📦 Kontent turini tanlang:', {
     reply_markup: {
       inline_keyboard: [
@@ -19,7 +65,7 @@ composer.hears("➕ Kontent qo'shish", async (ctx) => {
           { text: '📺 Serial', callback_data: 'add_type_serial' }
         ],
         [{ text: '🎌 Anime', callback_data: 'add_type_anime' }],
-        [{ text: '❌ Bekor qilish', callback_data: 'add_cancel' }]
+        [{ text: '❌ Bekor', callback_data: 'add_cancel' }]
       ]
     }
   });
@@ -28,176 +74,67 @@ composer.hears("➕ Kontent qo'shish", async (ctx) => {
 composer.action(/^add_type_(movie|serial|anime)$/, async (ctx) => {
   if (!ctx.adminRole) return ctx.answerCbQuery("❌ Ruxsat yo'q");
   const type = ctx.match[1];
-  ctx.session = ctx.session || {};
-  ctx.session.adminState = { step: 'enter_title', contentData: { type } };
   const names = { movie: '🎬 Kino', serial: '📺 Serial', anime: '🎌 Anime' };
+  ctx.session.adminState = { step: 'enter_title', contentData: { type } };
   await ctx.answerCbQuery();
-  try { await ctx.editMessageText(`✅ Tur: ${names[type]}\n\n📝 Kontent nomini yozing:`); } catch (e) {}
+  try { await ctx.editMessageText(`✅ Tur: ${names[type]}\n\n📝 Kontent nomini yozing (inglizcha):`); } catch (e) {}
 });
 
 composer.action('add_cancel', async (ctx) => {
-  if (ctx.session) ctx.session.adminState = null;
+  ctx.session.adminState = null;
   await ctx.answerCbQuery();
   try { await ctx.editMessageText('❌ Bekor qilindi.'); } catch (e) {}
 });
 
-const langKeyboard = {
-  inline_keyboard: [
-    [
-      { text: "🇺🇿 O'zbek", callback_data: 'lang_uz' },
-      { text: '🇷🇺 Rus', callback_data: 'lang_ru' }
-    ],
-    [
-      { text: '🌍 Original', callback_data: 'lang_original' },
-      { text: '💿 Blu-ray', callback_data: 'lang_bluray' }
-    ],
-    [{ text: '✅ Tayyor', callback_data: 'lang_done' }]
-  ]
-};
-
-composer.action(/^lang_(uz|ru|original|bluray)$/, async (ctx) => {
-  if (!ctx.adminRole) return;
-  const state = ctx.session?.adminState;
-  if (!state) return;
-  const lang = ctx.match[1];
-  if (!state.contentData.languages) state.contentData.languages = [];
-  if (state.contentData.languages.includes(lang)) {
-    state.contentData.languages = state.contentData.languages.filter(l => l !== lang);
-    await ctx.answerCbQuery(`❌ ${lang} olib tashlandi`);
-  } else {
-    state.contentData.languages.push(lang);
-    await ctx.answerCbQuery(`✅ ${lang} qo'shildi`);
-  }
-});
-
-composer.action('lang_done', async (ctx) => {
-  if (!ctx.adminRole) return;
-  const state = ctx.session?.adminState;
-  if (!state) return;
-  await ctx.answerCbQuery();
-  if (state.contentData.type === 'movie') {
-    state.step = 'send_file';
-    await ctx.reply('🎥 Kino faylini yuboring (video):');
-  } else {
-    state.step = 'enter_season_number';
-    await ctx.reply('📁 Fasl raqamini yozing (masalan: 1):');
-  }
-});
-
-// ✏️ Tahrirlash menyusi
-composer.action(/^edit_content_(.+)$/, async (ctx) => {
-  if (!ctx.adminRole) return ctx.answerCbQuery('❌');
-  const uniqueId = ctx.match[1];
-  const content = await Content.findOne({ uniqueId });
-  if (!content) return ctx.answerCbQuery('❌ Topilmadi');
-
-  await ctx.answerCbQuery();
-  try {
-    await ctx.editMessageText(
-      `✏️ <b>${content.title}</b> — Tahrirlash\n\nNimani o'zgartirmoqchisiz?`,
-      {
-        parse_mode: 'HTML',
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: '✏️ Nom', callback_data: `efield_${uniqueId}_title` },
-              { text: '📝 Tavsif', callback_data: `efield_${uniqueId}_description` }
-            ],
-            [
-              { text: '📅 Yil', callback_data: `efield_${uniqueId}_year` },
-              { text: '🖼 Poster', callback_data: `efield_${uniqueId}_poster` }
-            ],
-            [{ text: '🔙 Orqaga', callback_data: `admin_content_${uniqueId}` }]
-          ]
-        }
-      }
-    );
-  } catch (e) {}
-});
-
-composer.action(/^efield_(.+)_(title|description|year|poster)$/, async (ctx) => {
-  if (!ctx.adminRole) return ctx.answerCbQuery('❌');
-  const uniqueId = ctx.match[1];
-  const field = ctx.match[2];
-
-  const content = await Content.findOne({ uniqueId });
-  if (!content) return ctx.answerCbQuery('❌ Topilmadi');
-
-  const prompts = {
-    title: '✏️ Yangi nomni yozing:',
-    description: "📝 Yangi tavsifni yozing (o'chirish uchun /skip):",
-    year: '📅 Yangi yilni yozing (masalan: 2024):',
-    poster: '🖼 Yangi poster rasmini yuboring:'
-  };
-
-  ctx.session.adminState = {
-    step: `edit_${field}`,
-    editContentId: content._id,
-    editUniqueId: uniqueId
-  };
-
-  await ctx.answerCbQuery();
-  try { await ctx.editMessageText(prompts[field]); } catch (e) {}
-});
-
-// Poster yuklash (photo)
-composer.on('photo', async (ctx, next) => {
-  if (!ctx.adminRole) return next();
-  const state = ctx.session?.adminState;
-  if (!state || state.step !== 'edit_poster') return next();
-
-  const photo = ctx.message.photo;
-  const fileId = photo[photo.length - 1].file_id;
-
-  await Content.findByIdAndUpdate(state.editContentId, { poster: fileId });
-  ctx.session.adminState = null;
-
-  await ctx.replyWithPhoto(fileId, { caption: '✅ Poster yangilandi!' });
-});
-
-// Matn handleri
+// ─── Matn handleri ───────────────────────────────────────────────
 composer.on('text', async (ctx, next) => {
   if (!ctx.adminRole) return next();
   const state = ctx.session?.adminState;
   if (!state) return next();
 
   const text = ctx.message.text.trim();
-
   if (text === '❌ Bekor qilish') {
     ctx.session.adminState = null;
     return ctx.reply('❌ Bekor qilindi.');
   }
 
   switch (state.step) {
+
+    // ── Yangi kontent qo'shish steplari
     case 'enter_title': {
       state.contentData.title = text;
-      state.step = 'enter_description';
-      await ctx.reply('📝 Tavsif yozing (yoki /skip):');
+      state.step = 'enter_tags';
+      await ctx.reply(
+        '🔍 Qidiruv kalit so\'zlarini yozing (vergul bilan):\n\n' +
+        'Misol: <code>Inception, muqaddima, insepton</code>',
+        { parse_mode: 'HTML' }
+      );
       break;
     }
-    case 'enter_description': {
-      if (text !== '/skip') state.contentData.description = text;
-      state.step = 'enter_year';
-      await ctx.reply('📅 Yilni yozing (masalan: 2023) yoki /skip:');
-      break;
-    }
-    case 'enter_year': {
-      if (text !== '/skip') {
-        const y = parseInt(text);
-        if (!isNaN(y)) state.contentData.year = y;
+
+    case 'enter_tags': {
+      const tags = text.split(',').map(t => t.trim().toLowerCase()).filter(t => t.length > 0);
+      state.contentData.searchTags = tags;
+
+      if (state.contentData.type === 'movie') {
+        state.step = 'send_file';
+        await ctx.reply('🎥 Video yuboring:');
+      } else {
+        state.step = 'enter_season_number';
+        await ctx.reply('📁 Fasl raqami:');
       }
-      state.step = 'enter_language';
-      await ctx.reply('🌐 Tillarni tanlang:', { reply_markup: langKeyboard });
       break;
     }
+
     case 'enter_season_number': {
       const n = parseInt(text);
       if (isNaN(n)) return ctx.reply('❌ Raqam kiriting:');
       state.contentData.seasonNumber = n;
       state.step = 'enter_episode_number';
-      await ctx.reply(`📺 ${n}-Fasldagi necha-qismni yuklayapsiz?`);
+      await ctx.reply(`📺 ${n}-Fasl, qism raqami:`);
       break;
     }
+
     case 'enter_episode_number': {
       const n = parseInt(text);
       if (isNaN(n)) return ctx.reply('❌ Raqam kiriting:');
@@ -206,39 +143,54 @@ composer.on('text', async (ctx, next) => {
       await ctx.reply(`🎥 ${state.contentData.seasonNumber}-Fasl, ${n}-Qism uchun video yuboring:`);
       break;
     }
-    // Tahrirlash steplari
+
+    // ── Tahrirlash steplari
     case 'edit_title': {
-      await Content.findByIdAndUpdate(state.editContentId, { title: text });
+      await Content.findByIdAndUpdate(state.editId, { title: text });
+      const updated = await Content.findById(state.editId);
       ctx.session.adminState = null;
       await ctx.reply(`✅ Nom yangilandi: <b>${text}</b>`, { parse_mode: 'HTML' });
+      await showContentCard(ctx, updated);
       break;
     }
-    case 'edit_description': {
-      await Content.findByIdAndUpdate(
-        state.editContentId,
-        { description: text === '/skip' ? '' : text }
-      );
+
+    case 'edit_tags': {
+      const tags = text.split(',').map(t => t.trim().toLowerCase()).filter(t => t.length > 0);
+      await Content.findByIdAndUpdate(state.editId, { searchTags: tags });
+      const updated = await Content.findById(state.editId);
+      ctx.session.adminState = null;
+      await ctx.reply(`✅ Kalit so'zlar yangilandi!`);
+      await showContentCard(ctx, updated);
+      break;
+    }
+
+    case 'edit_desc': {
+      const desc = text === '/skip' ? '' : text;
+      await Content.findByIdAndUpdate(state.editId, { description: desc });
+      const updated = await Content.findById(state.editId);
       ctx.session.adminState = null;
       await ctx.reply('✅ Tavsif yangilandi!');
+      await showContentCard(ctx, updated);
       break;
     }
+
     case 'edit_year': {
       const y = parseInt(text);
-      if (!isNaN(y)) {
-        await Content.findByIdAndUpdate(state.editContentId, { year: y });
-        ctx.session.adminState = null;
-        await ctx.reply(`✅ Yil yangilandi: <b>${y}</b>`, { parse_mode: 'HTML' });
-      } else {
-        await ctx.reply('❌ Raqam kiriting:');
-      }
+      if (isNaN(y)) return ctx.reply('❌ Raqam kiriting (masalan: 2024):');
+      await Content.findByIdAndUpdate(state.editId, { year: y });
+      const updated = await Content.findById(state.editId);
+      ctx.session.adminState = null;
+      await ctx.reply(`✅ Yil yangilandi: <b>${y}</b>`, { parse_mode: 'HTML' });
+      await showContentCard(ctx, updated);
       break;
     }
+
     default:
       return next();
   }
 });
 
-// Video/document handleri
+// ─── Video / Document handleri ──────────────────────────────────
 composer.on(['video', 'document'], async (ctx, next) => {
   if (!ctx.adminRole) return next();
   const state = ctx.session?.adminState;
@@ -251,38 +203,35 @@ composer.on(['video', 'document'], async (ctx, next) => {
 
   if (data.type === 'movie') {
     let uniqueId, existing;
-    do {
-      uniqueId = generateUniqueId();
-      existing = await Content.findOne({ uniqueId });
-    } while (existing);
+    do { uniqueId = generateUniqueId(); existing = await Content.findOne({ uniqueId }); } while (existing);
 
-    await Content.create({
-      uniqueId, title: data.title, description: data.description,
-      type: data.type, year: data.year, languages: data.languages || [],
-      fileId, createdBy: ctx.from.id
+    const content = await Content.create({
+      uniqueId, title: data.title, type: data.type,
+      searchTags: data.searchTags || [], fileId, createdBy: ctx.from.id
     });
 
     ctx.session.adminState = null;
     const link = getDeepLink(uniqueId);
     await ctx.reply(
-      `✅ <b>${data.title}</b> saqlandi!\n\n🆔 ID: <code>${uniqueId}</code>\n🔗 Link:\n${link}`,
+      `✅ <b>${data.title}</b> saqlandi!\n\n🆔 <code>${uniqueId}</code>\n🔗 ${link}`,
       { parse_mode: 'HTML' }
     );
+
+    // Kutgan foydalanuvchilarga xabar
+    await notifyPendingSearches(ctx, content);
+
   } else {
+    // Serial / Anime
     let content = await Content.findOne({ title: data.title, type: data.type });
 
     if (!content) {
       let uniqueId, existing;
-      do {
-        uniqueId = generateUniqueId();
-        existing = await Content.findOne({ uniqueId });
-      } while (existing);
-
+      do { uniqueId = generateUniqueId(); existing = await Content.findOne({ uniqueId }); } while (existing);
       content = await Content.create({
-        uniqueId, title: data.title, description: data.description,
-        type: data.type, year: data.year, languages: data.languages || [],
-        createdBy: ctx.from.id
+        uniqueId, title: data.title, type: data.type,
+        searchTags: data.searchTags || [], createdBy: ctx.from.id
       });
+      await notifyPendingSearches(ctx, content);
     }
 
     let season = await Season.findOne({ contentId: content._id, seasonNumber: data.seasonNumber });
@@ -296,8 +245,7 @@ composer.on(['video', 'document'], async (ctx, next) => {
 
     await Episode.create({
       contentId: content._id, seasonId: season._id,
-      episodeNumber: data.episodeNumber, fileId,
-      language: data.languages?.[0] || ''
+      episodeNumber: data.episodeNumber, fileId
     });
 
     const link = getDeepLink(content.uniqueId);
@@ -307,7 +255,7 @@ composer.on(['video', 'document'], async (ctx, next) => {
     };
 
     await ctx.reply(
-      `✅ ${data.seasonNumber}-Fasl, ${data.episodeNumber}-Qism saqlandi!\n\n🔗 Link:\n${link}\n\nDavom etasizmi?`,
+      `✅ ${data.seasonNumber}-Fasl, ${data.episodeNumber}-Qism saqlandi!\n🔗 ${link}\n\nDavom etasizmi?`,
       {
         reply_markup: {
           inline_keyboard: [
@@ -323,6 +271,36 @@ composer.on(['video', 'document'], async (ctx, next) => {
   }
 });
 
+// Kutgan userlarga xabar yuborish
+async function notifyPendingSearches(ctx, content) {
+  try {
+    const keywords = [
+      content.title.toLowerCase(),
+      ...(content.searchTags || []).map(t => t.toLowerCase().trim())
+    ];
+    const pending = await SearchRequest.find({ notified: false });
+
+    for (const req of pending) {
+      const query = req.query.toLowerCase().trim();
+      const matches = keywords.some(k => k.includes(query) || query.includes(k));
+      if (matches) {
+        try {
+          const typeEmoji = { movie: '🎬', serial: '📺', anime: '🎌' };
+          await ctx.telegram.sendMessage(
+            req.userId,
+            `🎉 Siz qidirgan "<b>${req.query}</b>" botga qo'shildi!\n\n${typeEmoji[content.type]} <b>${content.title}</b>`,
+            { parse_mode: 'HTML' }
+          );
+          await SearchRequest.findByIdAndUpdate(req._id, { notified: true });
+        } catch (e) {}
+      }
+    }
+  } catch (e) {
+    console.error('notifyPendingSearches xatosi:', e.message);
+  }
+}
+
+// ─── Episode davomi ──────────────────────────────────────────────
 composer.action('ep_next', async (ctx) => {
   if (!ctx.adminRole) return;
   const state = ctx.session?.adminState;
@@ -346,14 +324,15 @@ composer.action('ep_new_season', async (ctx) => {
 
 composer.action('ep_done', async (ctx) => {
   if (!ctx.adminRole) return;
-  if (ctx.session) ctx.session.adminState = null;
+  ctx.session.adminState = null;
   await ctx.answerCbQuery();
   await ctx.reply('✅ Kontent yuklash yakunlandi!');
 });
 
+// ─── Kontentlar ro'yxati ─────────────────────────────────────────
 composer.hears('📋 Kontentlar', async (ctx) => {
   if (!ctx.adminRole) return;
-  await ctx.reply('📋 Kontent turini tanlang:', {
+  await ctx.reply('📋 Turni tanlang:', {
     reply_markup: {
       inline_keyboard: [
         [
@@ -372,13 +351,13 @@ composer.action(/^admin_list_(movie|serial|anime)_(\d+)$/, async (ctx) => {
   const page = parseInt(ctx.match[2]);
   const limit = 8;
 
-  const contents = await Content.find({ type }).sort({ createdAt: -1 }).skip(page * limit).limit(limit);
+  const contents = await Content.find({ type }).sort({ title: 1 }).skip(page * limit).limit(limit);
   const total = await Content.countDocuments({ type });
 
   if (contents.length === 0) return ctx.answerCbQuery("Kontent yo'q");
 
   const buttons = contents.map(c => [{
-    text: `${c.isActive ? '✅' : '❌'} ${c.title} [${c.uniqueId}]`,
+    text: `${c.isActive ? '✅' : '❌'} ${c.title}`,
     callback_data: `admin_content_${c.uniqueId}`
   }]);
 
@@ -387,114 +366,82 @@ composer.action(/^admin_list_(movie|serial|anime)_(\d+)$/, async (ctx) => {
   if ((page + 1) * limit < total) nav.push({ text: '➡️', callback_data: `admin_list_${type}_${page + 1}` });
   if (nav.length) buttons.push(nav);
 
+  const totalPages = Math.ceil(total / limit);
   await ctx.answerCbQuery();
   try {
-    await ctx.editMessageText(`📋 ${type} ro'yxati (${total} ta):`, {
+    await ctx.editMessageText(`📋 ${page + 1}/${totalPages} sahifa (${total} ta):`, {
       reply_markup: { inline_keyboard: buttons }
     });
   } catch (e) {
-    await ctx.reply(`📋 ${type} ro'yxati (${total} ta):`, {
+    await ctx.reply(`📋 ${page + 1}/${totalPages} sahifa (${total} ta):`, {
       reply_markup: { inline_keyboard: buttons }
     });
   }
 });
 
+// ─── Kontent kartochkasi ─────────────────────────────────────────
 composer.action(/^admin_content_(.+)$/, async (ctx) => {
   if (!ctx.adminRole) return ctx.answerCbQuery('❌');
+  const content = await Content.findOne({ uniqueId: ctx.match[1] });
+  if (!content) return ctx.answerCbQuery('❌ Topilmadi');
+  await ctx.answerCbQuery();
+  await showContentCard(ctx, content, true);
+});
+
+// ─── Maydon tahrirlash ───────────────────────────────────────────
+composer.action(/^ef_([A-Z0-9]+)_(title|tags|desc|year)$/, async (ctx) => {
+  if (!ctx.adminRole) return ctx.answerCbQuery('❌');
   const uniqueId = ctx.match[1];
+  const field = ctx.match[2];
   const content = await Content.findOne({ uniqueId });
   if (!content) return ctx.answerCbQuery('❌ Topilmadi');
 
-  const link = getDeepLink(uniqueId);
+  const prompts = {
+    title: `✏️ Yangi nomni yozing:\n\nHozirgi: <b>${content.title}</b>`,
+    tags: `🔍 Yangi kalit so'zlarni yozing (vergul bilan):\n\nHozirgi: <code>${content.searchTags?.join(', ') || 'yo\'q'}</code>`,
+    desc: `📝 Yangi tavsifni yozing (o'chirish uchun /skip):\n\nHozirgi: ${content.description || 'yo\'q'}`,
+    year: `📅 Yangi yilni yozing:\n\nHozirgi: ${content.year || "yo'q"}`
+  };
+
+  ctx.session.adminState = { step: `edit_${field}`, editId: content._id };
   await ctx.answerCbQuery();
-  try {
-    await ctx.editMessageText(
-      `📦 <b>${content.title}</b>\n\n` +
-      `🆔 ID: <code>${uniqueId}</code>\n` +
-      `🔗 Link: ${link}\n` +
-      `👁 Ko'rishlar: ${content.viewCount}\n` +
-      `📊 Status: ${content.isActive ? '✅ Aktiv' : '❌ Nofaol'}`,
-      {
-        parse_mode: 'HTML',
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: content.isActive ? "🔴 Nofaol" : '🟢 Faol', callback_data: `toggle_${uniqueId}` },
-              { text: '✏️ Tahrirlash', callback_data: `edit_content_${uniqueId}` }
-            ],
-            [{ text: "🗑 O'chirish", callback_data: `del_${uniqueId}` }],
-            [{ text: '🔙 Orqaga', callback_data: `admin_list_${content.type}_0` }]
-          ]
-        }
-      }
-    );
-  } catch (e) {}
+  try { await ctx.editMessageText(prompts[field], { parse_mode: 'HTML' }); } catch (e) {}
 });
 
-composer.action(/^toggle_(.+)$/, async (ctx) => {
+// ─── Toggle / O'chirish ──────────────────────────────────────────
+composer.action(/^toggle_([A-Z0-9]+)$/, async (ctx) => {
   if (!ctx.adminRole) return ctx.answerCbQuery('❌');
-  const uniqueId = ctx.match[1];
-  const content = await Content.findOne({ uniqueId });
+  const content = await Content.findOne({ uniqueId: ctx.match[1] });
   if (!content) return ctx.answerCbQuery('❌');
-
   content.isActive = !content.isActive;
   await content.save();
-  const link = getDeepLink(uniqueId);
-
-  await ctx.answerCbQuery(content.isActive ? '✅ Yoqildi' : '🔴 Nofaol');
-  try {
-    await ctx.editMessageText(
-      `📦 <b>${content.title}</b>\n\n` +
-      `🆔 ID: <code>${uniqueId}</code>\n` +
-      `🔗 Link: ${link}\n` +
-      `👁 Ko'rishlar: ${content.viewCount}\n` +
-      `📊 Status: ${content.isActive ? '✅ Aktiv' : '❌ Nofaol'}`,
-      {
-        parse_mode: 'HTML',
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: content.isActive ? "🔴 Nofaol" : '🟢 Faol', callback_data: `toggle_${uniqueId}` },
-              { text: '✏️ Tahrirlash', callback_data: `edit_content_${uniqueId}` }
-            ],
-            [{ text: "🗑 O'chirish", callback_data: `del_${uniqueId}` }],
-            [{ text: '🔙 Orqaga', callback_data: `admin_list_${content.type}_0` }]
-          ]
-        }
-      }
-    );
-  } catch (e) {}
+  await ctx.answerCbQuery(content.isActive ? '✅ Yoqildi' : '🔴 Nofaol qilindi');
+  await showContentCard(ctx, content, true);
 });
 
-composer.action(/^del_(.+)$/, async (ctx) => {
+composer.action(/^del_([A-Z0-9]+)$/, async (ctx) => {
   if (!ctx.adminRole) return ctx.answerCbQuery('❌');
-  const uniqueId = ctx.match[1];
   await ctx.answerCbQuery();
   try {
     await ctx.editMessageText("⚠️ Haqiqatan ham o'chirmoqchimisiz?", {
       reply_markup: {
-        inline_keyboard: [
-          [
-            { text: '✅ Ha', callback_data: `confirm_del_${uniqueId}` },
-            { text: "❌ Yo'q", callback_data: `admin_content_${uniqueId}` }
-          ]
-        ]
+        inline_keyboard: [[
+          { text: '✅ Ha', callback_data: `confirm_del_${ctx.match[1]}` },
+          { text: "❌ Yo'q", callback_data: `admin_content_${ctx.match[1]}` }
+        ]]
       }
     });
   } catch (e) {}
 });
 
-composer.action(/^confirm_del_(.+)$/, async (ctx) => {
+composer.action(/^confirm_del_([A-Z0-9]+)$/, async (ctx) => {
   if (!ctx.adminRole) return ctx.answerCbQuery('❌');
-  const uniqueId = ctx.match[1];
-  const content = await Content.findOne({ uniqueId });
-
+  const content = await Content.findOne({ uniqueId: ctx.match[1] });
   if (content) {
     await Episode.deleteMany({ contentId: content._id });
     await Season.deleteMany({ contentId: content._id });
-    await Content.deleteOne({ uniqueId });
+    await Content.deleteOne({ uniqueId: ctx.match[1] });
   }
-
   await ctx.answerCbQuery("🗑 O'chirildi");
   try { await ctx.editMessageText("✅ Kontent o'chirildi."); } catch (e) {}
 });
