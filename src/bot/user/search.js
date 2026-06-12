@@ -4,20 +4,38 @@ const SearchRequest = require('../../models/SearchRequest');
 
 const composer = new Composer();
 
+// /cancel — istalgan vaqtda holatni tozalash
+composer.command('cancel', async (ctx) => {
+  ctx.session.searching = false;
+  ctx.session.pendingNotifyQuery = null;
+  ctx.session.adminState = null;
+  await ctx.reply('❌ Bekor qilindi.', { reply_markup: { remove_keyboard: true } });
+});
+
 composer.hears('🔍 Qidirish', async (ctx) => {
   ctx.session.searching = true;
-  await ctx.reply('🔍 Qidirmoqchi bo\'lgan kino/serial/anime nomini yozing:');
+  await ctx.reply(
+    '🔍 Qidirmoqchi bo\'lgan kino/serial/anime nomini yozing:\n\n/cancel — bekor qilish'
+  );
 });
 
 composer.on('text', async (ctx, next) => {
   if (!ctx.session?.searching) return next();
   const query = ctx.message.text.trim();
-  if (query.startsWith('/')) { ctx.session.searching = false; return next(); }
+  if (query.startsWith('/')) {
+    ctx.session.searching = false;
+    return next();
+  }
 
   ctx.session.searching = false;
 
-  // Qidiruv tarixi saqlash
-  // (SearchRequest modelidan foydalanamiz, notified=true degani faqat log)
+  await SearchRequest.create({
+    userId: ctx.from.id,
+    username: ctx.from.username,
+    firstName: ctx.from.first_name,
+    query,
+    notified: true
+  }).catch(() => {});
 
   const contents = await Content.find({
     isActive: true,
@@ -30,25 +48,21 @@ composer.on('text', async (ctx, next) => {
   if (contents.length === 0) {
     ctx.session.pendingNotifyQuery = query;
 
-    // Qidiruv logini saqlash
-    try {
-      await SearchRequest.create({
-        userId: ctx.from.id,
-        username: ctx.from.username,
-        firstName: ctx.from.first_name,
-        query,
-        notified: true // faqat log, xabar yuborilmagan
-      });
-    } catch (e) {}
+    const existing = await SearchRequest.findOne({
+      userId: ctx.from.id,
+      query: { $regex: `^${query}$`, $options: 'i' },
+      notified: false
+    });
 
     return ctx.reply(
-      `❌ "<b>${query}</b>" bo'yicha hech narsa topilmadi.\n\nAdminga xabar yuborib, qo'shilishini so'raysizmi?`,
+      `❌ "<b>${query}</b>" bo'yicha hech narsa topilmadi.\n\n` +
+      (existing ? '⏳ So\'rovingiz allaqachon yuborilgan.' : 'Adminga xabar yuborib, qo\'shilishini so\'raysizmi?'),
       {
         parse_mode: 'HTML',
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '📩 Adminga yuborish', callback_data: 'notify_admin_req' }]
-          ]
+        reply_markup: existing ? undefined : {
+          inline_keyboard: [[
+            { text: '📩 Adminga yuborish', callback_data: 'notify_admin_req' }
+          ]]
         }
       }
     );
@@ -71,7 +85,6 @@ composer.action('notify_admin_req', async (ctx) => {
   const query = ctx.session?.pendingNotifyQuery;
   if (!query) return ctx.answerCbQuery('❌ So\'rov topilmadi');
 
-  // Allaqachon yuborilganmi?
   const existing = await SearchRequest.findOne({
     userId: ctx.from.id,
     query: { $regex: `^${query}$`, $options: 'i' },
@@ -90,13 +103,12 @@ composer.action('notify_admin_req', async (ctx) => {
     notified: false
   });
 
-  // Adminga xabar
   try {
     const adminId = process.env.SUPER_ADMIN_ID;
     const userName = ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name;
     await ctx.telegram.sendMessage(
       adminId,
-      `🔍 <b>Yangi so'rov</b>\n\n👤 Foydalanuvchi: ${userName}\n🔎 Qidiruv: <b>${query}</b>\n⏰ ${new Date().toLocaleString('uz-UZ')}`,
+      `🔍 <b>Yangi so'rov</b>\n\n👤 ${userName}\n🔎 <b>${query}</b>\n⏰ ${new Date().toLocaleString('uz-UZ')}`,
       { parse_mode: 'HTML' }
     );
   } catch (e) {}
