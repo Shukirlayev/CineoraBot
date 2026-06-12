@@ -12,9 +12,29 @@ composer.command('start', async (ctx) => {
   const args = ctx.message.text.split(' ');
   const deepLinkId = args[1];
 
+  // Avval xush kelibsiz xabarini ko'rsin
+  const isNewUser = !(await require('../../models/User').findOne({ telegramId: ctx.from.id }));
+
   const subResult = await checkSubscription(ctx);
+
   if (subResult !== true) {
     if (deepLinkId) ctx.session.pendingDeepLink = deepLinkId;
+
+    // Yangi user bo'lsa avval xush kelibsiz xabari
+    if (isNewUser) {
+      await ctx.reply(
+        `👋 Salom, <b>${ctx.from.first_name}</b>! CineoraBot'ga xush kelibsiz!\n\n` +
+        `🎬 Bu yerda siz yuqori sifatdagi kino, serial va animlarni bepul tomosha qilishingiz mumkin.\n\n` +
+        `▶️ Botdan foydalanish uchun quyidagi kanallarga obuna bo'ling:`,
+        { parse_mode: 'HTML' }
+      );
+    } else {
+      await ctx.reply(
+        `📢 Botdan foydalanish uchun quyidagi kanallarga obuna bo'ling:`,
+        { parse_mode: 'HTML' }
+      );
+    }
+
     return sendSubscribeMessage(ctx, subResult);
   }
 
@@ -25,10 +45,13 @@ composer.command('start', async (ctx) => {
   }
 
   await ctx.reply(
-    `👋 Salom, <b>${ctx.from.first_name}</b>!\n\n🎬 <b>CineoraBot</b>ga xush kelibsiz!\n\nPastdagi menyudan tanlang:`,
+    `👋 Salom, <b>${ctx.from.first_name}</b>!\n\n` +
+    `🎬 <b>CineoraBot</b>ga xush kelibsiz!\n\n` +
+    `Pastdagi menyudan tanlang:`,
     { parse_mode: 'HTML', ...mainMenu }
   );
 });
+
 
 async function sendContent(ctx, content) {
   try {
