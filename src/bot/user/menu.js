@@ -31,17 +31,26 @@ composer.hears('🎌 Anime', async (ctx) => { await deletePrevMsg(ctx); await sh
 composer.hears('🎲 Tasodifiy', async (ctx) => {
   await deletePrevMsg(ctx);
 
-  const count = await Content.countDocuments({ isActive: true });
-  if (count === 0) return ctx.reply('❌ Hozircha kontent mavjud emas.');
+  try {
+    const [content] = await Content.aggregate([
+      { $match: { isActive: true } },
+      { $sample: { size: 1 } }
+    ]);
 
-  const random = Math.floor(Math.random() * count);
-  const content = await Content.findOne({ isActive: true }).skip(random);
-  if (!content) return ctx.reply('❌ Xatolik yuz berdi.');
+    if (!content) return ctx.reply('❌ Hozircha kontent mavjud emas.');
 
-  await ctx.answerCbQuery?.();
-  const { sendContent } = require('./start');
-  await sendContent(ctx, content);
+    // aggregate obyekt qaytaradi, to'liq model emas — shuning uchun findById qilamiz
+    const fullContent = await Content.findById(content._id);
+    if (!fullContent) return ctx.reply('❌ Xatolik yuz berdi.');
+
+    const { sendContent } = require('./start');
+    await sendContent(ctx, fullContent);
+  } catch (e) {
+    console.error('Tasodifiy xatosi:', e.message);
+    await ctx.reply('❌ Xatolik yuz berdi.');
+  }
 });
+
 
 composer.hears('📊 Statistika', async (ctx) => {
   await deletePrevMsg(ctx);
