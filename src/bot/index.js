@@ -8,16 +8,15 @@ const { mainMenu } = require('../utils/keyboards');
 const startHandler = require('./user/start');
 const menuHandler = require('./user/menu');
 const searchHandler = require('./user/search');
+const favoritesHandler = require('./user/favorites');
 const adminHandler = require('./admin');
 const broadcastHandler = require('./admin/broadcast');
 
 async function createBot() {
   const bot = new Telegraf(process.env.BOT_TOKEN);
 
-  // MongoDB session
   bot.use(mongoSession());
 
-  // Foydalanuvchini saqlash
   bot.use(async (ctx, next) => {
     if (!ctx.from) return next();
     try {
@@ -40,8 +39,8 @@ async function createBot() {
   bot.use(broadcastHandler);
   bot.use(menuHandler);
   bot.use(searchHandler);
+  bot.use(favoritesHandler);
 
-  // Obunani tekshirish callback
   bot.action('check_subscribe', async (ctx) => {
     const result = await checkSubscription(ctx);
     if (result === true) {
