@@ -2,11 +2,9 @@ const { Composer } = require('telegraf');
 const Content = require('../../models/Content');
 const User = require('../../models/User');
 const { checkSubscription, sendSubscribeMessage } = require('../../utils/checkSubscription');
-const { sendContent } = require('./start');
 
 const composer = new Composer();
 
-// Obuna tekshirish (admin emas bo'lsa)
 composer.use(async (ctx, next) => {
   if (!ctx.message?.text) return next();
   if (ctx.adminRole) return next();
@@ -22,6 +20,22 @@ composer.hears('🎬 Kinolar', async (ctx) => showList(ctx, 'movie'));
 composer.hears('📺 Seriallar', async (ctx) => showList(ctx, 'serial'));
 composer.hears('🎌 Anime', async (ctx) => showList(ctx, 'anime'));
 
+composer.hears('📊 Statistika', async (ctx) => {
+  const totalUsers = await User.countDocuments();
+  const movies = await Content.countDocuments({ type: 'movie', isActive: true });
+  const serials = await Content.countDocuments({ type: 'serial', isActive: true });
+  const anime = await Content.countDocuments({ type: 'anime', isActive: true });
+
+  await ctx.reply(
+    `📊 <b>Bot statistikasi</b>\n\n` +
+    `👥 Foydalanuvchilar: <b>${totalUsers}</b>\n` +
+    `🎬 Kinolar: <b>${movies}</b>\n` +
+    `📺 Seriallar: <b>${serials}</b>\n` +
+    `🎌 Anime: <b>${anime}</b>`,
+    { parse_mode: 'HTML' }
+  );
+});
+
 async function showList(ctx, type) {
   const names = { movie: '🎬 Kinolar', serial: '📺 Seriallar', anime: '🎌 Anime' };
   const contents = await Content.find({ type, isActive: true })
@@ -32,6 +46,8 @@ async function showList(ctx, type) {
     return ctx.reply(`❌ Hozircha ${names[type]} mavjud emas.`);
   }
 
+  const total = await Content.countDocuments({ type, isActive: true });
+
   const buttons = contents.map(c => [
     {
       text: `${c.title}${c.year ? ` (${c.year})` : ''}`,
@@ -39,7 +55,6 @@ async function showList(ctx, type) {
     }
   ]);
 
-  const total = await Content.countDocuments({ type, isActive: true });
   if (total > 20) {
     buttons.push([{ text: '➡️ Keyingi', callback_data: `list_${type}_1` }]);
   }
@@ -49,16 +64,15 @@ async function showList(ctx, type) {
   });
 }
 
-// Kontent tanlash
 composer.action(/^content_(.+)$/, async (ctx) => {
   const uniqueId = ctx.match[1];
   const content = await Content.findOne({ uniqueId, isActive: true });
   if (!content) return ctx.answerCbQuery('❌ Topilmadi');
   await ctx.answerCbQuery();
+  const { sendContent } = require('./start');
   await sendContent(ctx, content);
 });
 
-// Sahifalash
 composer.action(/^list_(movie|serial|anime)_(\d+)$/, async (ctx) => {
   const type = ctx.match[1];
   const page = parseInt(ctx.match[2]);
@@ -88,7 +102,7 @@ composer.action(/^list_(movie|serial|anime)_(\d+)$/, async (ctx) => {
   try {
     await ctx.editMessageReplyMarkup({ inline_keyboard: buttons });
   } catch (e) {
-    if (!e.message.includes('message is not modified')) {
+    if (!e.message?.includes('message is not modified')) {
       console.error(e);
     }
   }
