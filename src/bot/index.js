@@ -116,47 +116,47 @@ async function createBot() {
   });
 
   // ── chosen_inline_result — tanlangan kontentni yuborish ───
-  bot.on('chosen_inline_result', async (ctx) => {
-    const uniqueId = ctx.chosenInlineResult.result_id;
-    const userId = ctx.from.id;
+bot.on('chosen_inline_result', async (ctx) => {
+  const uniqueId = ctx.chosenInlineResult.result_id;
+  const userId = ctx.from.id;
 
-    const content = await Content.findOne({ uniqueId, isActive: true });
-    if (!content) return;
+  const content = await Content.findOne({ uniqueId, isActive: true });
+  if (!content) return;
 
-    try {
-      if (content.type === 'movie' && content.fileId) {
-        const caption =
-          `🎬 <b>${content.title}</b>` +
-          (content.year ? ` (${content.year})` : '') +
-          (content.languages?.length ? `\n🌐 ${content.languages.join(' | ')}` : '');
+  try {
+    if (content.type === 'movie' && content.fileId) {
+      const caption =
+        `🎬 <b>${content.title}</b>` +
+        (content.year ? ` (${content.year})` : '') +
+        (content.languages?.length ? `\n🌐 ${content.languages.join(' | ')}` : '');
 
-        await ctx.telegram.sendVideo(userId, content.fileId, {
-          caption,
-          parse_mode: 'HTML'
-        });
-      } else {
-        // Serial/Anime — deeplink yuborish
-        await ctx.telegram.sendMessage(
-          userId,
-          `${content.type === 'anime' ? '🎌' : '📺'} <b>${content.title}</b>${content.year ? ` (${content.year})` : ''}\n\n` +
-          `▶️ Ko'rish uchun bosing:`,
-          {
-            parse_mode: 'HTML',
-            reply_markup: {
-              inline_keyboard: [[
-                {
-                  text: "▶️ Ko'rish",
-                  url: `https://t.me/${process.env.BOT_USERNAME}?start=${content.uniqueId}`
-                }
-              ]]
-            }
+      await ctx.telegram.sendVideo(userId, content.fileId, {
+        caption,
+        parse_mode: 'HTML'
+      });
+    } else {
+      // Serial/Anime — deeplink
+      await ctx.telegram.sendMessage(
+        userId,
+        `${content.type === 'anime' ? '🎌' : '📺'} <b>${content.title}</b>${content.year ? ` (${content.year})` : ''}\n\nFasllarni ko'rish uchun:`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: {
+            inline_keyboard: [[
+              {
+                text: "▶️ Ko'rish",
+                url: `https://t.me/${process.env.BOT_USERNAME}?start=${content.uniqueId}`
+              }
+            ]]
           }
-        );
-      }
-    } catch (e) {
-      console.error('chosen_inline_result xatosi:', e.message);
+        }
+      );
     }
-  });
+  } catch (e) {
+    console.error('chosen_inline_result xatosi:', e.message);
+  }
+});
+
 
   // ── Obuna tekshirish ───────────────────────────────────────
   bot.action('check_subscribe', async (ctx) => {
