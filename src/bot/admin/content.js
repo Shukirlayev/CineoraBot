@@ -71,21 +71,63 @@ composer.hears("➕ Kontent qo'shish", async (ctx) => {
   });
 });
 
-composer.action(/^add_type_(movie|serial|anime)$/, async (ctx) => {
-  if (!ctx.adminRole) return ctx.answerCbQuery("❌ Ruxsat yo'q");
+composer.action(/^admin_list_(movie|serial|anime)_(\d+)$/, async (ctx) => {
+  if (!ctx.adminRole) return ctx.answerCbQuery('❌');
   const type = ctx.match[1];
-  const names = { movie: '🎬 Kino', serial: '📺 Serial', anime: '🎌 Anime' };
-  ctx.session.adminState = { step: 'enter_title', contentData: { type } };
+  const page = parseInt(ctx.match[2]);
+  const limit = 8;
+
+  const contents = await Content.find({ type }).sort({ title: 1 }).skip(page * limit).limit(limit);
+  const total = await Content.countDocuments({ type });
+
+  if (contents.length === 0) return ctx.answerCbQuery("Kontent yo'q");
+
+  const buttons = contents.map(c => [{
+    text: `${c.isActive ? '✅' : '❌'} ${c.title}`,
+    callback_data: `admin_content_${c.uniqueId}`
+  }]);
+
+  const nav = [];
+  if (page > 0) nav.push({ text: '⬅️', callback_data: `admin_list_${type}_${page - 1}` });
+  if ((page + 1) * limit < total) nav.push({ text: '➡️', callback_data: `admin_list_${type}_${page + 1}` });
+  if (nav.length) buttons.push(nav);
+
+  // Qidiruv tugmasi + sahifa info
+  buttons.push([{ text: '🔍 Qidirish', callback_data: `admin_search_${type}` }]);
+
+  const totalPages = Math.ceil(total / limit);
   await ctx.answerCbQuery();
-  try { await ctx.editMessageText(`✅ Tur: ${names[type]}\n\n📝 Kontent nomini yozing (inglizcha):`); } catch (e) {}
+  try {
+    await ctx.editMessageText(
+      `📋 ${page + 1}/${totalPages} sahifa (${total} ta):`,
+      { reply_markup: { inline_keyboard: buttons } }
+    );
+  } catch (e) {
+    await ctx.reply(
+      `📋 ${page + 1}/${totalPages} sahifa (${total} ta):`,
+      { reply_markup: { inline_keyboard: buttons } }
+    );
+  }
 });
 
-composer.action('add_cancel', async (ctx) => {
-  ctx.session.adminState = null;
+// Qidiruv boshlash
+composer.action(/^admin_search_(movie|serial|anime)$/, async (ctx) => {
+  if (!ctx.adminRole) return ctx.answerCbQuery('❌');
+  const type = ctx.match[1];
+
+  ctx.session.adminState = { step: 'admin_content_search', searchType: type };
   await ctx.answerCbQuery();
-  try { await ctx.editMessageText('❌ Bekor qilindi.'); } catch (e) {}
+
+  try {
+    await ctx.editMessageText(
+      '🔍 Kontent nomini yozing:\n\n/cancel — bekor qilish'
+    );
+  } catch (e) {}
 });
 
+// Qidiruv natijasi
+// Bu qatorni composer.on('text') ichidagi switch ga qo'shing:
+// case 'admin_content_search': { ... }
 // ─── Matn handleri ───────────────────────────────────────────────
 composer.on('text', async (ctx, next) => {
   if (!ctx.adminRole) return next();
@@ -99,6 +141,44 @@ composer.on('text', async (ctx, next) => {
   }
 
   switch (state.step) {
+    
+    case 'admin_content_search': {
+  const results = await Content.find({
+    type: state.searchType,
+    title: { $regex: text, $options: 'i' }
+  }).sort({ title: 1 }).limit(10);
+
+  ctx.session.adminState = null;
+
+  if (results.length === 0) {
+    await ctx.reply(
+      `❌ "<b>${text}</b>" topilmadi.`,
+      {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '🔙 Orqaga', callback_data: `admin_list_${state.searchType}_0` }
+          ]]
+        }
+      }
+    );
+    break;
+  }
+
+  const buttons = results.map(c => [{
+    text: `${c.isActive ? '✅' : '❌'} ${c.title}`,
+    callback_data: `admin_content_${c.uniqueId}`
+  }]);
+
+  buttons.push([{ text: '🔙 Orqaga', callback_data: `admin_list_${state.searchType}_0` }]);
+
+  await ctx.reply(
+    `🔍 "<b>${text}</b>" — ${results.length} ta natija:`,
+    { parse_mode: 'HTML', reply_markup: { inline_keyboard: buttons } }
+  );
+  break;
+}
+
 
     // ── Yangi kontent qo'shish steplari
     case 'enter_title': {
