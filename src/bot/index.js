@@ -4,6 +4,7 @@ const User = require('../models/User');
 const Content = require('../models/Content');
 const { checkSubscription, sendSubscribeMessage } = require('../utils/checkSubscription');
 const { mainMenu } = require('../utils/keyboards');
+const linksHandler = require('./admin/links');
 
 const startHandler = require('./user/start');
 const menuHandler = require('./user/menu');
@@ -38,6 +39,7 @@ async function createBot() {
 
   bot.use(startHandler);
   bot.use(adminHandler);
+  bot.use(linksHandler);
   bot.use(broadcastHandler);
   bot.use(requestsHandler);
   bot.use(menuHandler);
