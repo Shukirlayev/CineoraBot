@@ -13,6 +13,7 @@ const favoritesHandler = require('./user/favorites');
 const adminHandler = require('./admin');
 const broadcastHandler = require('./admin/broadcast');
 const requestsHandler = require('./admin/requests');
+const batchHandler = require('./admin/batch');
 
 async function createBot() {
   const bot = new Telegraf(process.env.BOT_TOKEN);
@@ -39,6 +40,7 @@ async function createBot() {
 
   bot.use(startHandler);
   bot.use(adminHandler);
+  bot.use(batchHandler);
   bot.use(linksHandler);
   bot.use(broadcastHandler);
   bot.use(requestsHandler);
