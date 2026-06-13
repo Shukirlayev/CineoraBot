@@ -6,6 +6,9 @@ const { generateUniqueId, getDeepLink } = require('../../utils/helpers');
 
 const composer = new Composer();
 
+// Media group larni buffer qilish uchun
+const mediaGroupBuffer = new Map(); // groupId → { adminId, timer, fileIds[] }
+
 // ── /batch command ────────────────────────────────────────────────
 composer.command('batch', async (ctx) => {
   if (!ctx.adminRole) return;
@@ -22,36 +25,20 @@ composer.command('batch', async (ctx) => {
     );
   }
 
-  // Serial/Anime uchun avval nom va fasl so'rash
   if (arg === 'serial' || arg === 'anime') {
-    ctx.session.batchState = {
-      type: arg,
-      step: 'enter_serial_name',
-      videos: []
-    };
+    ctx.session.batchState = { type: arg, step: 'enter_serial_name', videos: [] };
     return ctx.reply(
       `${validTypes[arg]} nomi (inglizcha):`,
-      {
-        reply_markup: {
-          inline_keyboard: [[
-            { text: '❌ Bekor', callback_data: 'batch_cancel' }
-          ]]
-        }
-      }
+      { reply_markup: { inline_keyboard: [[{ text: '❌ Bekor', callback_data: 'batch_cancel' }]] } }
     );
   }
 
-  // Kino uchun to'g'ridan video qabul qilish
-  ctx.session.batchState = {
-    type: arg,
-    step: 'collecting',
-    videos: []
-  };
+  ctx.session.batchState = { type: arg, step: 'collecting', videos: [] };
 
   await ctx.reply(
     `✅ ${validTypes[arg]} batch rejimi yoqildi!\n\n` +
-    `🎥 Videolarni yuboring (xohlagancha)\n` +
-    `Tugatgach "✅ Tugatdim" tugmasini bosing:`,
+    `🎥 Videolarni yuboring — hammasini birdan tanlang va yuboring\n\n` +
+    `Tugatgach "✅ Tugatdim" bosing:`,
     {
       reply_markup: {
         inline_keyboard: [[
@@ -63,7 +50,78 @@ composer.command('batch', async (ctx) => {
   );
 });
 
-// ── Matn handleri (serial nomi, fasl raqami, nom, kalit so'zlar) ──
+// ── Video qabul qilish (media group + oddiy) ──────────────────────
+composer.on(['video', 'document'], async (ctx, next) => {
+  if (!ctx.adminRole) return next();
+  const state = ctx.session?.batchState;
+  if (!state || state.step !== 'collecting') return next();
+
+  const fileId = ctx.message.video?.file_id || ctx.message.document?.file_id;
+  if (!fileId) return next();
+
+  const mediaGroupId = ctx.message.media_group_id;
+
+  if (mediaGroupId) {
+    // Media group — buffer ga qo'shish
+    if (!mediaGroupBuffer.has(mediaGroupId)) {
+      mediaGroupBuffer.set(mediaGroupId, {
+        userId: ctx.from.id,
+        chatId: ctx.chat.id,
+        fileIds: [],
+        timer: null
+      });
+    }
+
+    const group = mediaGroupBuffer.get(mediaGroupId);
+    group.fileIds.push(fileId);
+
+    // Avvalgi timerni bekor qilish
+    if (group.timer) clearTimeout(group.timer);
+
+    // 2 soniya kutib, guruhni yopish
+    group.timer = setTimeout(async () => {
+      const g = mediaGroupBuffer.get(mediaGroupId);
+      if (!g) return;
+      mediaGroupBuffer.delete(mediaGroupId);
+
+      // Sessionni yangilash
+      const currentState = ctx.session?.batchState;
+      if (!currentState || currentState.step !== 'collecting') return;
+
+      for (const fid of g.fileIds) {
+        currentState.videos.push({ fileId: fid, title: null, searchTags: null });
+      }
+
+      // Xabar yuborish va 5s da o'chirish
+      const count = currentState.videos.length;
+      try {
+        const sent = await ctx.telegram.sendMessage(
+          g.chatId,
+          `✅ ${g.fileIds.length} ta qabul qilindi (jami: ${count} ta)`
+        );
+        setTimeout(async () => {
+          try { await ctx.telegram.deleteMessage(g.chatId, sent.message_id); } catch (e) {}
+        }, 5000);
+      } catch (e) {}
+
+    }, 2000);
+
+  } else {
+    // Oddiy bitta video
+    state.videos.push({ fileId, title: null, searchTags: null });
+    const count = state.videos.length;
+
+    // 5s da o'chib ketadigan xabar
+    try {
+      const sent = await ctx.reply(`✅ ${count} ta video qabul qilindi`);
+      setTimeout(async () => {
+        try { await ctx.telegram.deleteMessage(ctx.chat.id, sent.message_id); } catch (e) {}
+      }, 5000);
+    } catch (e) {}
+  }
+});
+
+// ── Matn handleri ─────────────────────────────────────────────────
 composer.on('text', async (ctx, next) => {
   if (!ctx.adminRole) return next();
   const state = ctx.session?.batchState;
@@ -78,13 +136,7 @@ composer.on('text', async (ctx, next) => {
       state.step = 'enter_season_number';
       await ctx.reply(
         `📁 "${text}" — fasl raqami:`,
-        {
-          reply_markup: {
-            inline_keyboard: [[
-              { text: '❌ Bekor', callback_data: 'batch_cancel' }
-            ]]
-          }
-        }
+        { reply_markup: { inline_keyboard: [[{ text: '❌ Bekor', callback_data: 'batch_cancel' }]] } }
       );
       break;
     }
@@ -95,7 +147,7 @@ composer.on('text', async (ctx, next) => {
       state.seasonNumber = n;
       state.step = 'collecting';
       await ctx.reply(
-        `✅ ${state.type === 'anime' ? '🎌' : '📺'} "${state.serialTitle}" — ${n}-Fasl\n\n` +
+        `✅ "${state.serialTitle}" — ${n}-Fasl\n\n` +
         `🎥 Qismlarni tartib bilan yuboring:\n` +
         `Tugatgach "✅ Tugatdim" bosing:`,
         {
@@ -114,8 +166,14 @@ composer.on('text', async (ctx, next) => {
       state.videos[state.currentIndex].title = text;
       state.step = 'naming_tags';
       await ctx.reply(
-        `🔍 Kalit so'zlar (vergul bilan):\n\nMisol: <code>Fight Club, jang klubi, fayt klab</code>`,
-        { parse_mode: 'HTML' }
+        `🔍 Kalit so'zlar (vergul bilan):\n\n` +
+        `Misol: <code>Normal, normal film, 2025</code>`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: {
+            inline_keyboard: [[{ text: '⏭ O\'tkazib yuborish', callback_data: 'batch_skip_tags' }]]
+          }
+        }
       );
       break;
     }
@@ -123,28 +181,7 @@ composer.on('text', async (ctx, next) => {
     case 'naming_tags': {
       const tags = text.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
       state.videos[state.currentIndex].searchTags = tags;
-
-      // Keyingi videoga o'tish
-      state.currentIndex++;
-
-      if (state.currentIndex < state.videos.length) {
-        state.step = 'naming_title';
-        const remaining = state.videos.length - state.currentIndex;
-        await ctx.reply(
-          `✅ Saqlandi! (${remaining} ta qoldi)\n\n` +
-          `📝 ${state.currentIndex + 1}/${state.videos.length} — Nom:`,
-          {
-            reply_markup: {
-              inline_keyboard: [[
-                { text: '⏭ Bu videoni o\'tkazib yuborish', callback_data: 'batch_skip' }
-              ]]
-            }
-          }
-        );
-      } else {
-        // Hammasi nomlandi — saqlash
-        await saveAllBatch(ctx);
-      }
+      await goNextVideo(ctx, state);
       break;
     }
 
@@ -153,57 +190,82 @@ composer.on('text', async (ctx, next) => {
   }
 });
 
-// ── Video qabul qilish ────────────────────────────────────────────
-composer.on(['video', 'document'], async (ctx, next) => {
-  if (!ctx.adminRole) return next();
+// ── Kalit so'zlarni o'tkazib yuborish ────────────────────────────
+composer.action('batch_skip_tags', async (ctx) => {
+  if (!ctx.adminRole) return ctx.answerCbQuery('❌');
   const state = ctx.session?.batchState;
-  if (!state || state.step !== 'collecting') return next();
+  if (!state) return ctx.answerCbQuery('❌');
 
-  const fileId = ctx.message.video?.file_id || ctx.message.document?.file_id;
-  if (!fileId) return next();
+  state.videos[state.currentIndex].searchTags = [];
+  await ctx.answerCbQuery('⏭ O\'tkazildi');
+  try { await ctx.deleteMessage(); } catch (e) {}
+  await goNextVideo(ctx, state);
+});
 
-  state.videos.push({ fileId, title: null, searchTags: null });
+// ── Video o'tkazib yuborish ───────────────────────────────────────
+composer.action('batch_skip', async (ctx) => {
+  if (!ctx.adminRole) return ctx.answerCbQuery('❌');
+  const state = ctx.session?.batchState;
+  if (!state) return ctx.answerCbQuery('❌');
 
-  // Har 5 ta videoda eslatma
-  if (state.videos.length % 5 === 0) {
+  state.videos.splice(state.currentIndex, 1);
+  await ctx.answerCbQuery('⏭ Video o\'tkazildi');
+  try { await ctx.deleteMessage(); } catch (e) {}
+
+  if (state.videos.length === 0) {
+    ctx.session.batchState = null;
+    return ctx.reply('❌ Barcha videolar o\'tkazildi.');
+  }
+
+  if (state.currentIndex >= state.videos.length) {
+    await saveAllBatch(ctx);
+  } else {
+    state.step = 'naming_title';
     await ctx.reply(
-      `📦 ${state.videos.length} ta video qabul qilindi. Davom eting yoki "✅ Tugatdim" bosing.`,
+      `📝 ${state.currentIndex + 1}/${state.videos.length} — Nom:`,
+      { reply_markup: { inline_keyboard: [[{ text: '⏭ Bu videoni o\'tkazish', callback_data: 'batch_skip' }]] } }
+    );
+  }
+});
+
+// ── Keyingi videoga o'tish ────────────────────────────────────────
+async function goNextVideo(ctx, state) {
+  state.currentIndex++;
+
+  if (state.currentIndex < state.videos.length) {
+    state.step = 'naming_title';
+    const remaining = state.videos.length - state.currentIndex;
+    await ctx.reply(
+      `✅ Saqlandi! (${remaining} ta qoldi)\n\n` +
+      `📝 ${state.currentIndex + 1}/${state.videos.length} — Nom:`,
       {
         reply_markup: {
-          inline_keyboard: [[
-            { text: '✅ Tugatdim', callback_data: 'batch_done' },
-            { text: '❌ Bekor', callback_data: 'batch_cancel' }
-          ]]
+          inline_keyboard: [[{ text: '⏭ Bu videoni o\'tkazish', callback_data: 'batch_skip' }]]
         }
       }
     );
   } else {
-    // Oddiy tasdiqlash (reaction kabi)
-    try {
-      await ctx.telegram.sendMessage(ctx.chat.id, `✅ ${state.videos.length} ta`, {
-        reply_to_message_id: ctx.message.message_id
-      });
-    } catch (e) {}
+    await saveAllBatch(ctx);
   }
-});
+}
 
 // ── Tugatdim ──────────────────────────────────────────────────────
 composer.action('batch_done', async (ctx) => {
   if (!ctx.adminRole) return ctx.answerCbQuery('❌');
   const state = ctx.session?.batchState;
 
-  if (!state || state.videos.length === 0) {
-    return ctx.answerCbQuery('❌ Hech qanday video yuborilmadi!', { show_alert: true });
+  if (!state) return ctx.answerCbQuery('❌ Batch topilmadi', { show_alert: true });
+
+  if (state.videos.length === 0) {
+    return ctx.answerCbQuery('❌ Hech qanday video qabul qilinmadi! Biroz kuting...', { show_alert: true });
   }
 
-  await ctx.answerCbQuery();
+  await ctx.answerCbQuery(`✅ ${state.videos.length} ta video qabul qilindi!`);
+  try { await ctx.deleteMessage(); } catch (e) {}
 
   if (state.type === 'movie') {
-    // Kinolar uchun nom berish bosqichi
     state.step = 'naming_title';
     state.currentIndex = 0;
-
-    try { await ctx.deleteMessage(); } catch (e) {}
 
     await ctx.reply(
       `📦 ${state.videos.length} ta video qabul qilindi!\n\n` +
@@ -211,42 +273,13 @@ composer.action('batch_done', async (ctx) => {
       `1/${state.videos.length} — Nomini yozing:`,
       {
         reply_markup: {
-          inline_keyboard: [[
-            { text: '⏭ Bu videoni o\'tkazib yuborish', callback_data: 'batch_skip' }
-          ]]
+          inline_keyboard: [[{ text: '⏭ Bu videoni o\'tkazish', callback_data: 'batch_skip' }]]
         }
       }
     );
   } else {
-    // Serial/Anime — qismlar avtomatik raqamlanadi
-    state.step = 'saving_serial';
-    await ctx.answerCbQuery?.();
-    try { await ctx.deleteMessage(); } catch (e) {}
     await saveSerialBatch(ctx);
   }
-});
-
-// ── Skip (o'tkazib yuborish) ──────────────────────────────────────
-composer.action('batch_skip', async (ctx) => {
-  if (!ctx.adminRole) return ctx.answerCbQuery('❌');
-  const state = ctx.session?.batchState;
-  if (!state) return ctx.answerCbQuery('❌');
-
-  // Skip qilingan videoni o'chirish
-  state.videos.splice(state.currentIndex, 1);
-
-  if (state.currentIndex >= state.videos.length) {
-    // Hamma nomlandi
-    await ctx.answerCbQuery('⏭ O\'tkazib yuborildi');
-    await saveAllBatch(ctx);
-    return;
-  }
-
-  state.step = 'naming_title';
-  await ctx.answerCbQuery('⏭ O\'tkazib yuborildi');
-  await ctx.reply(
-    `📝 ${state.currentIndex + 1}/${state.videos.length} — Nom:`
-  );
 });
 
 // ── Bekor qilish ──────────────────────────────────────────────────
@@ -259,23 +292,18 @@ composer.action('batch_cancel', async (ctx) => {
 
 composer.command('cancel', async (ctx) => {
   if (!ctx.adminRole) return;
-  const hadBatch = !!ctx.session?.batchState;
   ctx.session.batchState = null;
   ctx.session.adminState = null;
-  await ctx.reply(hadBatch ? '❌ Batch rejimi bekor qilindi.' : '❌ Bekor qilindi.');
+  await ctx.reply('❌ Bekor qilindi.');
 });
 
 // ── Kinolarni saqlash ─────────────────────────────────────────────
 async function saveAllBatch(ctx) {
   const state = ctx.session.batchState;
   const saved = [];
-  const skipped = [];
 
   for (const video of state.videos) {
-    if (!video.title) {
-      skipped.push(video);
-      continue;
-    }
+    if (!video.title) continue;
 
     try {
       let uniqueId, existing;
@@ -284,7 +312,7 @@ async function saveAllBatch(ctx) {
         existing = await Content.findOne({ uniqueId });
       } while (existing);
 
-      const content = await Content.create({
+      await Content.create({
         uniqueId,
         title: video.title,
         type: state.type,
@@ -293,7 +321,7 @@ async function saveAllBatch(ctx) {
         createdBy: ctx.from.id
       });
 
-      saved.push({ title: video.title, uniqueId: content.uniqueId });
+      saved.push({ title: video.title, uniqueId });
     } catch (e) {
       console.error('Batch saqlash xatosi:', e.message);
     }
@@ -301,45 +329,29 @@ async function saveAllBatch(ctx) {
 
   ctx.session.batchState = null;
 
-  // Natija
-  let resultText = `✅ <b>Batch yakunlandi!</b>\n`;
-  resultText += `━━━━━━━━━━━━━━━━\n\n`;
-  resultText += `✅ Saqlandi: ${saved.length} ta\n`;
-  if (skipped.length > 0) resultText += `⏭ O'tkazildi: ${skipped.length} ta\n`;
-  resultText += `\n🔗 <b>Linklar:</b>\n\n`;
+  if (saved.length === 0) {
+    return ctx.reply('❌ Hech narsa saqlanmadi.');
+  }
 
-  saved.forEach((c, i) => {
-    const link = getDeepLink(c.uniqueId);
-    resultText += `${i + 1}. 🎬 <b>${c.title}</b>\n${link}\n\n`;
+  // Linklar ro'yxatini yuborish (uzun bo'lsa bo'lib yuborish)
+  const lines = saved.map((c, i) => {
+    return `${i + 1}. 🎬 <b>${c.title}</b>\n${getDeepLink(c.uniqueId)}`;
   });
 
-  // Xabar uzun bo'lsa bo'lib yuborish
-  if (resultText.length > 4000) {
-    const chunks = [];
-    let chunk = `✅ <b>Batch yakunlandi!</b> ${saved.length} ta saqlandi.\n\n🔗 <b>Linklar:</b>\n\n`;
+  const header = `✅ <b>Batch yakunlandi! ${saved.length} ta saqlandi</b>\n━━━━━━━━━━━━━━━━\n\n`;
+  let chunk = header;
 
-    saved.forEach((c, i) => {
-      const line = `${i + 1}. 🎬 <b>${c.title}</b>\n${getDeepLink(c.uniqueId)}\n\n`;
-      if ((chunk + line).length > 4000) {
-        chunks.push(chunk);
-        chunk = line;
-      } else {
-        chunk += line;
-      }
-    });
-    if (chunk) chunks.push(chunk);
-
-    for (const ch of chunks) {
-      await ctx.reply(ch, {
-        parse_mode: 'HTML',
-        disable_web_page_preview: true
-      });
+  for (const line of lines) {
+    if ((chunk + line + '\n\n').length > 4000) {
+      await ctx.reply(chunk, { parse_mode: 'HTML', disable_web_page_preview: true });
+      chunk = line + '\n\n';
+    } else {
+      chunk += line + '\n\n';
     }
-  } else {
-    await ctx.reply(resultText, {
-      parse_mode: 'HTML',
-      disable_web_page_preview: true
-    });
+  }
+
+  if (chunk) {
+    await ctx.reply(chunk, { parse_mode: 'HTML', disable_web_page_preview: true });
   }
 }
 
@@ -347,11 +359,7 @@ async function saveAllBatch(ctx) {
 async function saveSerialBatch(ctx) {
   const state = ctx.session.batchState;
 
-  // Mavjud contentni topish yoki yangi yaratish
-  let content = await Content.findOne({
-    title: state.serialTitle,
-    type: state.type
-  });
+  let content = await Content.findOne({ title: state.serialTitle, type: state.type });
 
   if (!content) {
     let uniqueId, existing;
@@ -369,12 +377,7 @@ async function saveSerialBatch(ctx) {
     });
   }
 
-  // Fasl
-  let season = await Season.findOne({
-    contentId: content._id,
-    seasonNumber: state.seasonNumber
-  });
-
+  let season = await Season.findOne({ contentId: content._id, seasonNumber: state.seasonNumber });
   if (!season) {
     season = await Season.create({
       contentId: content._id,
@@ -383,11 +386,9 @@ async function saveSerialBatch(ctx) {
     });
   }
 
-  // Mavjud qismlar sonini topish
   const existingEpCount = await Episode.countDocuments({ seasonId: season._id });
-
-  // Qismlarni saqlash
   let savedCount = 0;
+
   for (let i = 0; i < state.videos.length; i++) {
     try {
       await Episode.create({
@@ -397,9 +398,7 @@ async function saveSerialBatch(ctx) {
         fileId: state.videos[i].fileId
       });
       savedCount++;
-    } catch (e) {
-      console.error('Episode saqlash xatosi:', e.message);
-    }
+    } catch (e) {}
   }
 
   ctx.session.batchState = null;
@@ -411,13 +410,9 @@ async function saveSerialBatch(ctx) {
     `━━━━━━━━━━━━━━━━\n\n` +
     `${typeEmoji[content.type]} <b>${state.serialTitle}</b>\n` +
     `📁 ${state.seasonNumber}-Fasl\n` +
-    `📺 ${savedCount} ta qism saqlandi\n` +
-    `(${existingEpCount + 1} — ${existingEpCount + savedCount}-qismlar)\n\n` +
+    `📺 ${savedCount} ta qism (${existingEpCount + 1}—${existingEpCount + savedCount})\n\n` +
     `🔗 ${link}`,
-    {
-      parse_mode: 'HTML',
-      disable_web_page_preview: true
-    }
+    { parse_mode: 'HTML', disable_web_page_preview: true }
   );
 }
 
