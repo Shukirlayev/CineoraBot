@@ -17,7 +17,7 @@ const adminMainMenu = {
       ['📣 Broadcast', '📊 Statistika'],
       ['📢 Kanallar', '👥 Adminlar'],
       ['📬 So\'rovlar', '⚙️ Sozlamalar'],
-      ['🔙 Foydalanuvchi menyusi']
+      ['🔗 Linklar', '🔙 Foydalanuvchi menyusi']
     ],
     resize_keyboard: true
   }
