@@ -3,6 +3,8 @@ const Content = require('../../models/Content');
 const Season = require('../../models/Season');
 const Episode = require('../../models/Episode');
 const Favorite = require('../../models/Favorite');
+const Settings = require('../../models/Settings');
+const Session = require('../../models/Session');
 const { checkSubscription, sendSubscribeMessage } = require('../../utils/checkSubscription');
 const { mainMenu } = require('../../utils/keyboards');
 
@@ -12,29 +14,72 @@ composer.command('start', async (ctx) => {
   const args = ctx.message.text.split(' ');
   const deepLinkId = args[1];
 
-  // Avval xush kelibsiz xabarini ko'rsin
-  const isNewUser = !(await require('../../models/User').findOne({ telegramId: ctx.from.id }));
+  // ── Yangi foydalanuvchi — chiroyli xush kelibsiz xabari ──────────
+  if (ctx.isNewUser) {
+    const bannerId = await Settings.get('welcomeBannerId', null);
 
-  const subResult = await checkSubscription(ctx);
+    const welcomeText =
+      `🎬 <b>Cineora'ga xush kelibsiz, ${ctx.from.first_name}!</b>\n\n` +
+      `Kino, serial va animelarni bir joyda, tez va qulay tarzda tomosha qiling.\n\n` +
+      `Bu yerda sizni kutadi:\n` +
+      `🍿 Minglab kino va seriallar\n` +
+      `⚡ Tezkor qidiruv va instant natijalar\n` +
+      `🎥 HD / Blu-ray sifatdagi kontent\n` +
+      `🌐 O'zbek, Ingliz, Rus tilidagi tarjimalar\n` +
+      `⭐ Sevimlilar ro'yxati va tavsiyalar\n` +
+      `🎲 Tasodifiy film tanlash funksiyasi\n\n` +
+      `Hamma narsa sizga qulay bo'lishi uchun yaratilgan.\n\n` +
+      `Boshlashga tayyormisiz? 🚀`;
 
-  if (subResult !== true) {
     if (deepLinkId) ctx.session.pendingDeepLink = deepLinkId;
 
-    // Yangi user bo'lsa avval xush kelibsiz xabari
-    if (isNewUser) {
-      await ctx.reply(
-        `👋 Salom, <b>${ctx.from.first_name}</b>! CineoraBot'ga xush kelibsiz!\n\n` +
-        `🎬 Bu yerda siz yuqori sifatdagi kino, serial va animlarni bepul tomosha qilishingiz mumkin.\n\n` +
-        `▶️ Botdan foydalanish uchun quyidagi kanallarga obuna bo'ling:`,
-        { parse_mode: 'HTML' }
-      );
-    } else {
-      await ctx.reply(
-        `📢 Botdan foydalanish uchun quyidagi kanallarga obuna bo'ling:`,
-        { parse_mode: 'HTML' }
-      );
+    try {
+      if (bannerId) {
+        await ctx.replyWithPhoto(bannerId, { caption: welcomeText, parse_mode: 'HTML' });
+      } else {
+        await ctx.reply(welcomeText, { parse_mode: 'HTML' });
+      }
+    } catch (e) {
+      await ctx.reply(welcomeText, { parse_mode: 'HTML' });
     }
 
+    const localDeepLink = deepLinkId;
+    const userId = ctx.from.id;
+
+    setTimeout(async () => {
+      try {
+        const subResult = await checkSubscription(ctx);
+
+        if (subResult !== true) {
+          return sendSubscribeMessage(ctx, subResult);
+        }
+
+        if (localDeepLink) {
+          const content = await Content.findOne({ uniqueId: localDeepLink, isActive: true });
+
+          try {
+            await Session.findOneAndUpdate(
+              { key: String(userId) },
+              { $set: { 'data.pendingDeepLink': null } }
+            );
+          } catch (e) {}
+
+          if (content) return sendContent(ctx, content);
+        }
+
+        await ctx.reply('Pastdagi menyudan tanlang:', mainMenu);
+      } catch (e) {
+        console.error('Welcome delay xatosi:', e.message);
+      }
+    }, 3000);
+
+    return;
+  }
+
+  // ── Qaytgan foydalanuvchi — to'g'ridan tekshirish ────────────────
+  const subResult = await checkSubscription(ctx);
+  if (subResult !== true) {
+    if (deepLinkId) ctx.session.pendingDeepLink = deepLinkId;
     return sendSubscribeMessage(ctx, subResult);
   }
 
@@ -45,13 +90,10 @@ composer.command('start', async (ctx) => {
   }
 
   await ctx.reply(
-    `👋 Salom, <b>${ctx.from.first_name}</b>!\n\n` +
-    `🎬 <b>CineoraBot</b>ga xush kelibsiz!\n\n` +
-    `Pastdagi menyudan tanlang:`,
+    `👋 Salom, <b>${ctx.from.first_name}</b>!\n\nPastdagi menyudan tanlang:`,
     { parse_mode: 'HTML', ...mainMenu }
   );
 });
-
 
 async function sendContent(ctx, content) {
   try {
@@ -77,7 +119,6 @@ async function sendContent(ctx, content) {
       return;
     }
 
-    // Serial / Anime — fasllar
     const seasons = await Season.find({ contentId: content._id }).sort({ seasonNumber: 1 });
     if (seasons.length === 0) return ctx.reply('❌ Hozircha fasllar mavjud emas.');
 
@@ -98,7 +139,6 @@ async function sendContent(ctx, content) {
   }
 }
 
-// Fasl → barcha qismlar
 composer.action(/^season_(.+)$/, async (ctx) => {
   try {
     const season = await Season.findById(ctx.match[1]);
@@ -130,7 +170,6 @@ composer.action(/^season_(.+)$/, async (ctx) => {
   }
 });
 
-// Sevimlilar
 composer.action(/^fav_(.+)$/, async (ctx) => {
   const content = await Content.findOne({ uniqueId: ctx.match[1] });
   if (!content) return ctx.answerCbQuery('❌');
