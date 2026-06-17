@@ -2,9 +2,10 @@ const { Telegraf } = require('telegraf');
 const mongoSession = require('../utils/mongoSession');
 const User = require('../models/User');
 const Content = require('../models/Content');
+const Channel = require('../models/Channel');
+const JoinRequest = require('../models/JoinRequest');
 const { checkSubscription, sendSubscribeMessage } = require('../utils/checkSubscription');
 const { mainMenu } = require('../utils/keyboards');
-const linksHandler = require('./admin/links');
 
 const startHandler = require('./user/start');
 const menuHandler = require('./user/menu');
@@ -14,16 +15,19 @@ const adminHandler = require('./admin');
 const broadcastHandler = require('./admin/broadcast');
 const requestsHandler = require('./admin/requests');
 const batchHandler = require('./admin/batch');
+const linksHandler = require('./admin/links');
 
 async function createBot() {
   const bot = new Telegraf(process.env.BOT_TOKEN);
 
   bot.use(mongoSession());
 
-  // Foydalanuvchini saqlash
+  // Foydalanuvchini saqlash + yangi user aniqlash
   bot.use(async (ctx, next) => {
     if (!ctx.from) return next();
     try {
+      const existing = await User.findOne({ telegramId: ctx.from.id });
+      ctx.isNewUser = !existing;
       await User.findOneAndUpdate(
         { telegramId: ctx.from.id },
         {
@@ -34,38 +38,37 @@ async function createBot() {
         },
         { upsert: true, new: true }
       );
-    } catch (e) {}
+    } catch (e) {
+      ctx.isNewUser = false;
+    }
     return next();
   });
 
   bot.use(startHandler);
   bot.use(adminHandler);
-  bot.use(batchHandler);
-  bot.use(linksHandler);
   bot.use(broadcastHandler);
   bot.use(requestsHandler);
+  bot.use(batchHandler);
+  bot.use(linksHandler);
   bot.use(menuHandler);
   bot.use(searchHandler);
   bot.use(favoritesHandler);
 
-  // ── /search command — inline qidiruvni ochadi ──────────────
+  // ── /search command ──────────────────────────────────────────
   bot.command('search', async (ctx) => {
     await ctx.reply(
       '🍿 Kinolarni tezkor qidirish uchun quyidagi tugmani bosing:',
       {
         reply_markup: {
           inline_keyboard: [[
-            {
-              text: '🎬 Qidiruvni boshlash',
-              switch_inline_query_current_chat: ''
-            }
+            { text: '🎬 Qidiruvni boshlash', switch_inline_query_current_chat: '' }
           ]]
         }
       }
     );
   });
 
-  // ── Inline query ───────────────────────────────────────────
+  // ── Inline query ─────────────────────────────────────────────
   bot.on('inline_query', async (ctx) => {
     const query = ctx.inlineQuery.query.trim();
 
@@ -108,10 +111,7 @@ async function createBot() {
       },
       reply_markup: {
         inline_keyboard: [[
-          {
-            text: `▶️ Ko'rish`,
-            url: `https://t.me/${process.env.BOT_USERNAME}?start=${c.uniqueId}`
-          }
+          { text: "▶️ Ko'rish", url: `https://t.me/${process.env.BOT_USERNAME}?start=${c.uniqueId}` }
         ]]
       }
     }));
@@ -119,50 +119,82 @@ async function createBot() {
     await ctx.answerInlineQuery(results, { cache_time: 30 });
   });
 
-  // ── chosen_inline_result — tanlangan kontentni yuborish ───
-bot.on('chosen_inline_result', async (ctx) => {
-  const uniqueId = ctx.chosenInlineResult.result_id;
-  const userId = ctx.from.id;
+  // ── chosen_inline_result — to'g'ridan video yuborish ───────────
+  bot.on('chosen_inline_result', async (ctx) => {
+    const uniqueId = ctx.chosenInlineResult.result_id;
+    const userId = ctx.from.id;
 
-  const content = await Content.findOne({ uniqueId, isActive: true });
-  if (!content) return;
+    const content = await Content.findOne({ uniqueId, isActive: true });
+    if (!content) return;
 
-  try {
-    if (content.type === 'movie' && content.fileId) {
-      const caption =
-        `🎬 <b>${content.title}</b>` +
-        (content.year ? ` (${content.year})` : '') +
-        (content.languages?.length ? `\n🌐 ${content.languages.join(' | ')}` : '');
+    try {
+      if (content.type === 'movie' && content.fileId) {
+        const caption =
+          `🎬 <b>${content.title}</b>` +
+          (content.year ? ` (${content.year})` : '') +
+          (content.languages?.length ? `\n🌐 ${content.languages.join(' | ')}` : '');
 
-      await ctx.telegram.sendVideo(userId, content.fileId, {
-        caption,
-        parse_mode: 'HTML'
+        await ctx.telegram.sendVideo(userId, content.fileId, { caption, parse_mode: 'HTML' });
+      } else {
+        await ctx.telegram.sendMessage(
+          userId,
+          `${content.type === 'anime' ? '🎌' : '📺'} <b>${content.title}</b>${content.year ? ` (${content.year})` : ''}\n\nFasllarni ko'rish uchun:`,
+          {
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: "▶️ Ko'rish", url: `https://t.me/${process.env.BOT_USERNAME}?start=${content.uniqueId}` }
+              ]]
+            }
+          }
+        );
+      }
+    } catch (e) {
+      console.error('chosen_inline_result xatosi:', e.message);
+    }
+  });
+
+  // ── chat_join_request — yopiq kanal so'rovini avtomatik tasdiqlash ──
+  bot.on('chat_join_request', async (ctx) => {
+    const req = ctx.update.chat_join_request;
+    if (!req) return;
+
+    const chatId = req.chat.id.toString();
+    const userId = req.from.id;
+
+    try {
+      const channel = await Channel.findOne({
+        channelId: chatId,
+        type: 'private_request',
+        isActive: true
       });
-    } else {
-      // Serial/Anime — deeplink
+
+      if (!channel) return;
+
+      await ctx.telegram.approveChatJoinRequest(chatId, userId);
+
+      await JoinRequest.findOneAndUpdate(
+        { channelId: chatId, userId },
+        { channelId: chatId, userId, status: 'approved', approvedAt: new Date() },
+        { upsert: true }
+      );
+
       await ctx.telegram.sendMessage(
         userId,
-        `${content.type === 'anime' ? '🎌' : '📺'} <b>${content.title}</b>${content.year ? ` (${content.year})` : ''}\n\nFasllarni ko'rish uchun:`,
+        `✅ "<b>${channel.title}</b>" kanaliga so'rovingiz tasdiqlandi!\n\nBotdan foydalanishingiz mumkin 👇`,
         {
           parse_mode: 'HTML',
           reply_markup: {
-            inline_keyboard: [[
-              {
-                text: "▶️ Ko'rish",
-                url: `https://t.me/${process.env.BOT_USERNAME}?start=${content.uniqueId}`
-              }
-            ]]
+            inline_keyboard: [[{ text: '▶️ Davom etish', callback_data: 'check_subscribe' }]]
           }
         }
       );
+    } catch (e) {
+      console.error('chat_join_request xatosi:', e.message);
     }
-  } catch (e) {
-    console.error('chosen_inline_result xatosi:', e.message);
-  }
-});
+  });
 
-
-  // ── Obuna tekshirish ───────────────────────────────────────
+  // ── Obuna tekshirish ─────────────────────────────────────────
   bot.action('check_subscribe', async (ctx) => {
     const result = await checkSubscription(ctx);
     if (result === true) {
