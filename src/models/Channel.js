@@ -3,8 +3,10 @@ const mongoose = require('mongoose');
 const channelSchema = new mongoose.Schema({
   channelId: { type: String, required: true, unique: true },
   title: String,
+  type: { type: String, enum: ['public', 'private', 'private_request'], default: 'public' },
   username: String,
   link: String,
+  inviteLink: String,
   isActive: { type: Boolean, default: true },
   addedAt: { type: Date, default: Date.now }
 });
